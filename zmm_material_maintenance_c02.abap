@@ -47,23 +47,19 @@ CLASS lcl_log IMPLEMENTATION.
                            THEN is_row-matkey ).
 
     "no duplicates (same field can be maintained in several view tables)
-    IF line_exists( mt_msg[ KEY k_dup COMPONENTS row   = ls_msg-row   msgty = ls_msg-msgty
-                                                 field = ls_msg-field text  = ls_msg-text ] ).
+    LOOP AT mt_msg TRANSPORTING NO FIELDS USING KEY k_row
+         WHERE row   = ls_msg-row   AND msgty = ls_msg-msgty
+           AND field = ls_msg-field AND text  = ls_msg-text.
       RETURN.
-    ENDIF.
+    ENDLOOP.
     APPEND ls_msg TO mt_msg.
-    "counter per type (read by COUNT)
-    ASSIGN mt_cnt[ msgty = ls_msg-msgty ] TO FIELD-SYMBOL(<ls_cnt>).
-    IF sy-subrc = 0.
-      <ls_cnt>-cnt = <ls_cnt>-cnt + 1.
-    ELSE.
-      INSERT VALUE #( msgty = ls_msg-msgty cnt = 1 ) INTO TABLE mt_cnt.
-    ENDIF.
   ENDMETHOD.
 
   METHOD count.
     "Number of log messages of the given type.
-    rv_count = VALUE #( mt_cnt[ msgty = iv_type ]-cnt OPTIONAL ).
+    rv_count = REDUCE i( INIT n = 0
+                         FOR ls_msg IN mt_msg WHERE ( msgty = iv_type )
+                         NEXT n = n + 1 ).
   ENDMETHOD.
 
   METHOD has_error.
@@ -2949,32 +2945,10 @@ CLASS lcl_app IMPLEMENTATION.
     "and map them to the BAPI structures (MT_BAPI).
     DATA(lv_fixed_comp) = 'ROW_NO  ACTION  STATUS  MESSAGE PROCESS_PROFILE REFERENCE_MATNR REF_WERKS REF_LGORT ' &&
           ' REF_VKORG  REF_VTWEG REF_EKORG DEFAULT_MODE  COPY_BASIC  COPY_PURCH  COPY_MRP  COPY_FRCST  COPY_SALES  COPY_ACCOUNTING COPY_CLASS DEFAULT_SUMMARY MATNR '.
-    DATA: lt_split TYPE string_table,
-          lt_comp  TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
-    SPLIT lv_fixed_comp AT space INTO TABLE lt_split.
-    LOOP AT lt_split INTO DATA(lv_split) WHERE table_line IS NOT INITIAL.
-      INSERT lv_split INTO TABLE lt_comp.
-    ENDLOOP.
+    DATA: lt_comp TYPE string_table.
+    SPLIT lv_fixed_comp AT space INTO TABLE lt_comp.
     CONSTANTS lc_org_params TYPE string VALUE
       ` PLANTDATA FORECASTPARAMETERS PLANNINGDATA STORAGELOCATIONDATA VALUATIONDATA WAREHOUSENUMBERDATA SALESDATA STORAGETYPEDATA TAXCLASSIFICATIONS `.
-
-    "Mandatory fields of the field catalogue, with org.-level flag (once, not per row)
-    TYPES: BEGIN OF lty_mand,
-             fcat      TYPE ty_fcat,
-             org_level TYPE abap_bool,
-           END OF lty_mand.
-    DATA lt_mand TYPE STANDARD TABLE OF lty_mand WITH EMPTY KEY.
-    LOOP AT mo_config->mt_fcat INTO DATA(ls_mfcat) WHERE mandatory = abap_true.
-      APPEND VALUE #( fcat = ls_mfcat ) TO lt_mand ASSIGNING FIELD-SYMBOL(<ls_mand>).
-      LOOP AT ls_mfcat-targets INTO DATA(ls_mtgt).
-        IF lc_org_params CS | { ls_mtgt-param } |.
-          <ls_mand>-org_level = abap_true.
-        ENDIF.
-      ENDLOOP.
-    ENDLOOP.
-
-    "Existence of materials / org. levels: one SELECT per table
-    prefetch_existence( ).
 
     LOOP AT mt_row INTO DATA(ls_row).
       DATA(ls_bapi) = VALUE ty_bapi( row = ls_row-row matkey = ls_row-matkey ).
@@ -2987,7 +2961,8 @@ CLASS lcl_app IMPLEMENTATION.
                                 et_views = DATA(lt_ref_views)
                       CHANGING  cs_bapi  = ls_bapi ).
       LOOP AT mt_cell INTO DATA(ls_cell) WHERE row = ls_row-row.
-        CHECK NOT line_exists( lt_comp[ table_line = ls_cell-field ] ).
+        DATA(lv_comp) = VALUE #( lt_comp[ table_line = ls_cell-field  ] OPTIONAL ).
+        CHECK lv_comp <> ls_cell-field.
 
         DATA(lt_fcat) = FILTER #( mo_config->mt_fcat USING KEY k_field WHERE temp_field_name = ls_cell-field ).
 
@@ -3024,14 +2999,19 @@ CLASS lcl_app IMPLEMENTATION.
 
       "Mandatory fields without value in this row - the cell loop above only
       "sees filled cells. Columns missing in the template: see CHECK_COLUMNS
-      LOOP AT lt_mand INTO DATA(ls_mrec).
-        DATA(ls_mand) = ls_mrec-fcat.
+      LOOP AT mo_config->mt_fcat INTO DATA(ls_mand) WHERE mandatory = abap_true.
         CHECK line_exists( mt_header[ table_line = ls_mand-temp_field_name ] ).
         CHECK is_available( iv_row = ls_row-row iv_field = ls_mand-temp_field_name ) = abap_false.
 
         "Client-level field (no org. level target): one row of the material
         "is enough (BUILD_CALL merges client data); not sent at all by Extend
-        IF ls_mrec-org_level = abap_false.
+        DATA(lv_org_level) = abap_false.
+        LOOP AT ls_mand-targets INTO DATA(ls_tgt).
+          IF lc_org_params CS | { ls_tgt-param } |.
+            lv_org_level = abap_true.
+          ENDIF.
+        ENDLOOP.
+        IF lv_org_level = abap_false.
           CHECK lcl_screen=>get_operation( ) <> gc_op-extend.
           DATA(lv_in_other_row) = abap_false.
           LOOP AT mt_row INTO DATA(ls_other) USING KEY k_mat WHERE matkey = ls_row-matkey.
@@ -3055,55 +3035,6 @@ CLASS lcl_app IMPLEMENTATION.
 
     "Rows of the same material: conflicting characteristic values
     check_class_conflicts( ).
-  ENDMETHOD.
-
-  METHOD prefetch_existence.
-    "Read the existence data of all template materials (and reference materials)
-    "once per table instead of one SELECT SINGLE per template row.
-    DATA: lt_matnr TYPE tt_matnr_set,
-          lv_matnr TYPE matnr.
-
-    CLEAR: mt_ex_mara, mt_ex_marc, mt_ex_mvke, mt_ex_mard, mt_ex_mbew, mt_ex_mlgn.
-
-    LOOP AT mt_row INTO DATA(ls_row).
-      DATA(lt_keys) = VALUE string_table( ( COND #( WHEN lcl_mapper=>is_dummy_key( ls_row-matkey ) = abap_false
-                                                    THEN ls_row-matkey ) )
-                                          ( to_upper( get_value( iv_row = ls_row-row iv_field = gc_col-ref_matnr ) ) ) ).
-      LOOP AT lt_keys INTO DATA(lv_key) WHERE table_line IS NOT INITIAL.
-        CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
-          EXPORTING
-            input  = lv_key
-          IMPORTING
-            output = lv_matnr
-          EXCEPTIONS
-            OTHERS = 1.
-        IF sy-subrc = 0.                                   "invalid numbers are reported per row
-          INSERT lv_matnr INTO TABLE lt_matnr.
-        ENDIF.
-      ENDLOOP.
-    ENDLOOP.
-    CHECK lt_matnr IS NOT INITIAL.
-
-    DATA(lt_for) = VALUE tt_matnr_list( FOR lv_m IN lt_matnr ( matnr = lv_m ) ).
-
-    SELECT matnr, mtart, mbrsh FROM mara
-      FOR ALL ENTRIES IN @lt_for WHERE matnr = @lt_for-matnr
-      INTO CORRESPONDING FIELDS OF TABLE @mt_ex_mara.
-    SELECT matnr, werks FROM marc
-      FOR ALL ENTRIES IN @lt_for WHERE matnr = @lt_for-matnr
-      INTO CORRESPONDING FIELDS OF TABLE @mt_ex_marc.
-    SELECT matnr, vkorg, vtweg FROM mvke
-      FOR ALL ENTRIES IN @lt_for WHERE matnr = @lt_for-matnr
-      INTO CORRESPONDING FIELDS OF TABLE @mt_ex_mvke.
-    SELECT matnr, werks, lgort FROM mard
-      FOR ALL ENTRIES IN @lt_for WHERE matnr = @lt_for-matnr
-      INTO CORRESPONDING FIELDS OF TABLE @mt_ex_mard.
-    SELECT matnr, bwkey, bwtar FROM mbew
-      FOR ALL ENTRIES IN @lt_for WHERE matnr = @lt_for-matnr
-      INTO CORRESPONDING FIELDS OF TABLE @mt_ex_mbew.
-    SELECT matnr, lgnum FROM mlgn
-      FOR ALL ENTRIES IN @lt_for WHERE matnr = @lt_for-matnr
-      INTO CORRESPONDING FIELDS OF TABLE @mt_ex_mlgn.
   ENDMETHOD.
 
   METHOD check_row_control.
@@ -3180,6 +3111,7 @@ CLASS lcl_app IMPLEMENTATION.
       lc_plant_views TYPE string VALUE ` PURCH MRP FRCST PLNTST `.
     DATA: lv_refmat   TYPE matnr,
           lv_explicit TYPE abap_bool,
+          lv_dummy    TYPE matnr,
           lv_bwkey    TYPE bwkey,
           lv_ref_lgort TYPE lgort_d.
 
@@ -3251,16 +3183,16 @@ CLASS lcl_app IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    READ TABLE mt_ex_mara INTO DATA(ls_ref_mara) WITH TABLE KEY matnr = lv_refmat.
+    SELECT SINGLE mtart FROM mara INTO @DATA(lv_ref_mtart) WHERE matnr = @lv_refmat.
     IF sy-subrc <> 0.
       mo_log->add( iv_type = 'E' is_row = is_row iv_field = gc_col-ref_matnr
                    iv_text = |Reference material { lv_ref } does not exist| ).
       CLEAR et_views.
       RETURN.
     ENDIF.
-    IF ls_ref_mara-mtart <> p_mtart.
+    IF lv_ref_mtart <> p_mtart.
       mo_log->add( iv_type = 'W' is_row = is_row iv_field = gc_col-ref_matnr
-                   iv_text = |Reference material has type { ls_ref_mara-mtart } - selection is { p_mtart }| ).
+                   iv_text = |Reference material has type { lv_ref_mtart } - selection is { p_mtart }| ).
     ENDIF.
 
     "--- 3. org. levels of the reference (default: those of the template row)
@@ -3284,7 +3216,9 @@ CLASS lcl_app IMPLEMENTATION.
 
     "Plant level (purchasing, MRP, plant/storage; sales fields of MARC)
     IF lv_ref_werks IS NOT INITIAL.
-      IF NOT line_exists( mt_ex_marc[ matnr = lv_refmat werks = lv_ref_werks ] ).
+      SELECT SINGLE matnr FROM marc INTO @lv_dummy
+        WHERE matnr = @lv_refmat AND werks = @lv_ref_werks.
+      IF sy-subrc <> 0.
         LOOP AT et_views INTO DATA(lv_view).
           CHECK lc_plant_views CS | { lv_view } |.
           mo_log->add( iv_type = lv_msgty is_row = is_row iv_field = gc_col-ref_werks iv_view = lv_view
@@ -3318,8 +3252,11 @@ CLASS lcl_app IMPLEMENTATION.
 
     "Valuation
     IF line_exists( et_views[ table_line = gc_view-val ] ).
-      IF lv_bwkey IS INITIAL OR
-         NOT line_exists( mt_ex_mbew[ matnr = lv_refmat bwkey = lv_bwkey bwtar = space ] ).
+      IF lv_bwkey IS NOT INITIAL.
+        SELECT SINGLE matnr FROM mbew INTO @lv_dummy
+          WHERE matnr = @lv_refmat AND bwkey = @lv_bwkey AND bwtar = @space.
+      ENDIF.
+      IF lv_bwkey IS INITIAL OR sy-subrc <> 0.
         mo_log->add( iv_type = lv_msgty is_row = is_row iv_field = gc_col-ref_werks iv_view = gc_view-val
                      iv_text = |Reference { lv_ref } has no valuation data for valuation area '{ lv_bwkey }' - view not copied| ).
         DELETE et_views WHERE table_line = gc_view-val.
@@ -3329,8 +3266,11 @@ CLASS lcl_app IMPLEMENTATION.
 
     "Sales area
     IF line_exists( et_views[ table_line = gc_view-sales ] ).
-      IF lv_ref_vkorg IS INITIAL OR lv_ref_vtweg IS INITIAL OR
-         NOT line_exists( mt_ex_mvke[ matnr = lv_refmat vkorg = lv_ref_vkorg vtweg = lv_ref_vtweg ] ).
+      IF lv_ref_vkorg IS NOT INITIAL AND lv_ref_vtweg IS NOT INITIAL.
+        SELECT SINGLE matnr FROM mvke INTO @lv_dummy
+          WHERE matnr = @lv_refmat AND vkorg = @lv_ref_vkorg AND vtweg = @lv_ref_vtweg.
+      ENDIF.
+      IF lv_ref_vkorg IS INITIAL OR lv_ref_vtweg IS INITIAL OR sy-subrc <> 0.
         "no sales data at the reference: warning only (other rows may have it)
         mo_log->add( iv_type = 'W' is_row = is_row iv_field = gc_col-ref_vkorg iv_view = gc_view-sales
                      iv_text = |Reference { lv_ref } has no sales data for sales area | &&
@@ -4143,7 +4083,8 @@ CLASS lcl_app IMPLEMENTATION.
              exists TYPE abap_bool,
            END OF lty_org.
     DATA: lt_org   TYPE STANDARD TABLE OF lty_org WITH EMPTY KEY,
-          lv_matnr TYPE matnr.
+          lv_matnr TYPE matnr,
+          lv_dummy TYPE matnr.
 
     CHECK lcl_mapper=>is_dummy_key( is_row-matkey ) = abap_false.
 
@@ -4159,8 +4100,8 @@ CLASS lcl_app IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    READ TABLE mt_ex_mara INTO DATA(ls_mara) WITH TABLE KEY matnr = lv_matnr.
-    DATA(lv_exists) = xsdbool( sy-subrc = 0 ).
+    SELECT SINGLE mtart, mbrsh FROM mara INTO @DATA(ls_mara) WHERE matnr = @lv_matnr.
+    DATA(lv_exists) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
     DATA(lv_opid)   = lcl_screen=>get_operation( ).
 
     IF lv_opid = gc_op-create.
@@ -4197,35 +4138,40 @@ CLASS lcl_app IMPLEMENTATION.
 
     "Org. levels of this row - already maintained for the material?
     IF is_bapi-plantdata IS NOT INITIAL.
+      SELECT SINGLE matnr FROM marc INTO @lv_dummy
+        WHERE matnr = @lv_matnr AND werks = @is_bapi-plantdata-plant.
       APPEND VALUE #( text   = |Plant { is_bapi-plantdata-plant }|
-                      exists = xsdbool( line_exists( mt_ex_marc[ matnr = lv_matnr
-                                                                 werks = is_bapi-plantdata-plant ] ) ) ) TO lt_org.
+                      exists = COND #( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ) ) TO lt_org.
     ENDIF.
     IF is_bapi-salesdata-sales_org IS NOT INITIAL.
+      SELECT SINGLE matnr FROM mvke INTO @lv_dummy
+        WHERE matnr = @lv_matnr AND vkorg = @is_bapi-salesdata-sales_org
+                                AND vtweg = @is_bapi-salesdata-distr_chan.
       APPEND VALUE #( text   = |Sales area { is_bapi-salesdata-sales_org }/{ is_bapi-salesdata-distr_chan }|
-                      exists = xsdbool( line_exists( mt_ex_mvke[ matnr = lv_matnr
-                                                                 vkorg = is_bapi-salesdata-sales_org
-                                                                 vtweg = is_bapi-salesdata-distr_chan ] ) ) ) TO lt_org.
+                      exists = COND #( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ) ) TO lt_org.
     ENDIF.
     IF is_bapi-storagelocationdata-stge_loc IS NOT INITIAL.
       DATA(lv_sloc_plant) = COND werks_d( WHEN is_bapi-storagelocationdata-plant IS NOT INITIAL
                                           THEN is_bapi-storagelocationdata-plant
                                           ELSE is_bapi-plantdata-plant ).
+      SELECT SINGLE matnr FROM mard INTO @lv_dummy
+        WHERE matnr = @lv_matnr AND werks = @lv_sloc_plant
+                                AND lgort = @is_bapi-storagelocationdata-stge_loc.
       APPEND VALUE #( text   = |Storage location { lv_sloc_plant }/{ is_bapi-storagelocationdata-stge_loc }|
-                      exists = xsdbool( line_exists( mt_ex_mard[ matnr = lv_matnr
-                                                                 werks = lv_sloc_plant
-                                                                 lgort = is_bapi-storagelocationdata-stge_loc ] ) ) ) TO lt_org.
+                      exists = COND #( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ) ) TO lt_org.
     ENDIF.
     IF is_bapi-valuationdata-val_area IS NOT INITIAL.
+      SELECT SINGLE matnr FROM mbew INTO @lv_dummy
+        WHERE matnr = @lv_matnr AND bwkey = @is_bapi-valuationdata-val_area
+                                AND bwtar = @is_bapi-valuationdata-val_type.
       APPEND VALUE #( text   = |Valuation area { is_bapi-valuationdata-val_area }|
-                      exists = xsdbool( line_exists( mt_ex_mbew[ matnr = lv_matnr
-                                                                 bwkey = is_bapi-valuationdata-val_area
-                                                                 bwtar = is_bapi-valuationdata-val_type ] ) ) ) TO lt_org.
+                      exists = COND #( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ) ) TO lt_org.
     ENDIF.
     IF is_bapi-warehousenumberdata-whse_no IS NOT INITIAL.
+      SELECT SINGLE matnr FROM mlgn INTO @lv_dummy
+        WHERE matnr = @lv_matnr AND lgnum = @is_bapi-warehousenumberdata-whse_no.
       APPEND VALUE #( text   = |Warehouse { is_bapi-warehousenumberdata-whse_no }|
-                      exists = xsdbool( line_exists( mt_ex_mlgn[ matnr = lv_matnr
-                                                                 lgnum = is_bapi-warehousenumberdata-whse_no ] ) ) ) TO lt_org.
+                      exists = COND #( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ) ) TO lt_org.
     ENDIF.
 
     CASE lv_opid.
