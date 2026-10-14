@@ -37,6 +37,8 @@ CLASS lcl_log DEFINITION FINAL.
       count            IMPORTING iv_type TYPE symsgty RETURNING VALUE(rv_count) TYPE i,
       has_error        IMPORTING iv_row TYPE i       RETURNING VALUE(rv_error) TYPE abap_bool,
       has_global_error RETURNING VALUE(rv_error) TYPE abap_bool.
+  PRIVATE SECTION.
+    DATA mt_cnt TYPE tt_msgcnt.                 "messages per type (for COUNT)
 ENDCLASS.
 
 *----------------------------------------------------------------------*
@@ -199,7 +201,7 @@ CLASS lcl_output DEFINITION FINAL.
     METHODS publish.
   PRIVATE SECTION.
     DATA: mo_log TYPE REF TO lcl_log,
-          mt_out TYPE tt_msg,
+          mt_out TYPE tt_msg_out,
           mo_alv TYPE REF TO cl_salv_table.
     METHODS:
       build_alv      RETURNING VALUE(rv_ok) TYPE abap_bool,
@@ -292,7 +294,13 @@ CLASS lcl_app DEFINITION FINAL.
           mt_cell   TYPE tt_cell,             "template values
           mt_row    TYPE tt_row,              "template rows
           mt_copied TYPE tt_rowfield,         "values copied from reference
-          mt_bapi   TYPE tt_bapi.             "mapped BAPI data per row
+          mt_bapi   TYPE tt_bapi,             "mapped BAPI data per row
+          mt_ex_mara TYPE tt_ex_mara,         "existence buffers (PREFETCH_EXISTENCE)
+          mt_ex_marc TYPE tt_ex_marc,
+          mt_ex_mvke TYPE tt_ex_mvke,
+          mt_ex_mard TYPE tt_ex_mard,
+          mt_ex_mbew TYPE tt_ex_mbew,
+          mt_ex_mlgn TYPE tt_ex_mlgn.
 
     METHODS:
       load_template          RAISING lcx_error,
@@ -322,6 +330,7 @@ CLASS lcl_app DEFINITION FINAL.
       inherit_org_keys,
       check_columns,
       validate_and_map,
+      prefetch_existence,
       check_row_control      IMPORTING is_row  TYPE ty_row,
       copy_reference         IMPORTING is_row   TYPE ty_row
                              EXPORTING es_ref   TYPE ty_bapi

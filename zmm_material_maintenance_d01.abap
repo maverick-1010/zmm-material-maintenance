@@ -155,7 +155,17 @@ TYPES:
     text  TYPE bapi_msg,
   END OF ty_msg,
   tt_msg TYPE STANDARD TABLE OF ty_msg WITH EMPTY KEY
-         WITH NON-UNIQUE SORTED KEY k_row COMPONENTS row msgty,
+         WITH NON-UNIQUE SORTED KEY k_row COMPONENTS row msgty
+         WITH UNIQUE HASHED KEY k_dup COMPONENTS row msgty field text,   "duplicate check
+
+  tt_msg_out TYPE STANDARD TABLE OF ty_msg WITH EMPTY KEY,    "ALV copy of the log
+
+  "Message counter per type
+  BEGIN OF ty_msgcnt,
+    msgty TYPE symsgty,
+    cnt   TYPE i,
+  END OF ty_msgcnt,
+  tt_msgcnt TYPE HASHED TABLE OF ty_msgcnt WITH UNIQUE KEY msgty,
 
   "Line index of table parameters (param + line key -> index)
   BEGIN OF ty_linekey,
@@ -313,4 +323,45 @@ TYPES:
     exists TYPE abap_bool,
     chars  TYPE tt_charinfo,                      "incl. superior classes
   END OF ty_classinfo,
-  tt_classinfo TYPE HASHED TABLE OF ty_classinfo WITH UNIQUE KEY class klart.
+  tt_classinfo TYPE HASHED TABLE OF ty_classinfo WITH UNIQUE KEY class klart,
+
+  "Existence buffers (one SELECT per table for all template materials)
+  tt_matnr_set TYPE SORTED TABLE OF matnr WITH UNIQUE KEY table_line,
+  BEGIN OF ty_matnr_line,
+    matnr TYPE matnr,
+  END OF ty_matnr_line,
+  tt_matnr_list TYPE STANDARD TABLE OF ty_matnr_line WITH EMPTY KEY,
+  BEGIN OF ty_ex_mara,
+    matnr TYPE mara-matnr,
+    mtart TYPE mara-mtart,
+    mbrsh TYPE mara-mbrsh,
+  END OF ty_ex_mara,
+  tt_ex_mara TYPE SORTED TABLE OF ty_ex_mara WITH UNIQUE KEY matnr,
+  BEGIN OF ty_ex_marc,
+    matnr TYPE marc-matnr,
+    werks TYPE marc-werks,
+  END OF ty_ex_marc,
+  tt_ex_marc TYPE SORTED TABLE OF ty_ex_marc WITH UNIQUE KEY matnr werks,
+  BEGIN OF ty_ex_mvke,
+    matnr TYPE mvke-matnr,
+    vkorg TYPE mvke-vkorg,
+    vtweg TYPE mvke-vtweg,
+  END OF ty_ex_mvke,
+  tt_ex_mvke TYPE SORTED TABLE OF ty_ex_mvke WITH UNIQUE KEY matnr vkorg vtweg,
+  BEGIN OF ty_ex_mard,
+    matnr TYPE mard-matnr,
+    werks TYPE mard-werks,
+    lgort TYPE mard-lgort,
+  END OF ty_ex_mard,
+  tt_ex_mard TYPE SORTED TABLE OF ty_ex_mard WITH UNIQUE KEY matnr werks lgort,
+  BEGIN OF ty_ex_mbew,
+    matnr TYPE mbew-matnr,
+    bwkey TYPE mbew-bwkey,
+    bwtar TYPE mbew-bwtar,
+  END OF ty_ex_mbew,
+  tt_ex_mbew TYPE SORTED TABLE OF ty_ex_mbew WITH UNIQUE KEY matnr bwkey bwtar,
+  BEGIN OF ty_ex_mlgn,
+    matnr TYPE mlgn-matnr,
+    lgnum TYPE mlgn-lgnum,
+  END OF ty_ex_mlgn,
+  tt_ex_mlgn TYPE SORTED TABLE OF ty_ex_mlgn WITH UNIQUE KEY matnr lgnum.
