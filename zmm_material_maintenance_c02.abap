@@ -9,10 +9,12 @@
 
 CLASS lcx_error IMPLEMENTATION.
   METHOD constructor.
+    "Store the message text of the exception.
     super->constructor( ).
     mv_text = iv_text.
   ENDMETHOD.
   METHOD get_text.
+    "Return the stored message text.
     result = mv_text.
   ENDMETHOD.
 ENDCLASS.
@@ -23,6 +25,9 @@ ENDCLASS.
 CLASS lcl_log IMPLEMENTATION.
 
   METHOD add.
+    "Add a message to the log (= output list). The type gives the traffic-light icon,
+    "the org. keys are taken from the template row; a message that already exists
+    "for the same row, type, field and text is not added again.
     DATA(ls_msg) = VALUE ty_msg(
       icon  = SWITCH #( iv_type WHEN 'E' OR 'A' THEN icon_red_light
                                 WHEN 'W'        THEN icon_yellow_light
@@ -51,17 +56,21 @@ CLASS lcl_log IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD count.
+    "Number of log messages of the given type.
     rv_count = REDUCE i( INIT n = 0
                          FOR ls_msg IN mt_msg WHERE ( msgty = iv_type )
                          NEXT n = n + 1 ).
   ENDMETHOD.
 
   METHOD has_error.
+    "True if the template row has at least one error message.
     rv_error = COND #( WHEN line_exists( mt_msg[ KEY k_row COMPONENTS row = iv_row msgty = 'E' ] )
                        THEN abap_true ELSE abap_false ).
   ENDMETHOD.
 
   METHOD has_global_error.
+    "True if an error that belongs to no row exists (row 0), e.g. configuration or
+    "template errors.
     rv_error = COND #( WHEN line_exists( mt_msg[ KEY k_row COMPONENTS row = 0 msgty = 'E' ] )
                        THEN abap_true ELSE abap_false ).
   ENDMETHOD.
@@ -166,11 +175,13 @@ ENDCLASS.
 CLASS lcl_mapper IMPLEMENTATION.
 
   METHOD trim.
+    "Remove leading and trailing blanks of any value and return it as string.
     rv_value = iv_value.
     rv_value = replace( val = rv_value pcre = `^\s+|\s+$` with = `` occ = 0 ).
   ENDMETHOD.
 
   METHOD is_dummy_key.
+    "Dummy key = no MATNR in the template (empty) or row number marked with #.
     IF iv_key IS INITIAL.
       rv_dummy = abap_true.
       RETURN.
@@ -190,11 +201,6 @@ CLASS lcl_mapper IMPLEMENTATION.
 
     CONSTANTS lc_tables TYPE string VALUE
       ` MATERIALDESCRIPTION UNITSOFMEASURE INTERNATIONALARTNOS MATERIALLONGTEXT TAXCLASSIFICATIONS ALLOCVALUESCHAR ALLOCVALUESNUM ALLOCVALUESCURR `.
-
-*    DATA lc_single TYPE string.
-*
-*    lc_single = ` MATERIALDESCRIPTION UNITSOFMEASURE INTERNATIONALARTNOS MATERIALLONGTEXT TAXCLASSIFICATIONS ALLOCVALUESCHAR ALLOCVALUESNUM ALLOCVALUESCURR `
-*             && ` PRTDATA EXTENSIONIN FORECASTVALUES UNPLNDCONSUMPTIO TOTALCONSUMPTION RETURNMESSAGES CLIENTDATACWM UNITSOFMEASURECWM VALUATIONDATACWM MATPLSTADATA MARC_APS_EXTDATA DEMAND_PENALTYDATA `.
 
     CLEAR: ev_param, ev_table.
     DATA(lv_struct) = to_upper( trim( iv_struct ) ).
@@ -247,6 +253,8 @@ CLASS lcl_mapper IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD target_exists.
+    "Check that BAPI parameter and component of a mapping exist in the template
+    "structure TY_BAPI (including the fixed components).
     FIELD-SYMBOLS: <lt_tab> TYPE STANDARD TABLE,
                    <ls_str> TYPE any,
                    <lv_cmp> TYPE any.
@@ -293,6 +301,9 @@ CLASS lcl_mapper IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD map_value.
+    "Move one template value into the BAPI structure given by the mapping target.
+    "Table parameters: the line is identified by the line key (fixed values and the
+    "suffix _n of the column). EV_ERROR is filled if the conversion fails.
     FIELD-SYMBOLS: <ls_tgt> TYPE any,
                    <lv_tgt> TYPE any,
                    <lv_fix> TYPE any.
@@ -500,6 +511,7 @@ CLASS lcl_mapper IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD append_unique.
+    "Append the line unless an identical line exists.
     FIELD-SYMBOLS <ls_line> TYPE any.
     LOOP AT ct_tab ASSIGNING <ls_line>.
       IF <ls_line> = is_line.
@@ -578,7 +590,6 @@ CLASS lcl_mapper IMPLEMENTATION.
       <lv_func> = iv_function.
     ENDIF.
   ENDMETHOD.
-
 
   METHOD set_matnr.
     "MATERIAL (18) and - on S/4HANA - MATERIAL_LONG (40)
@@ -731,11 +742,14 @@ ENDCLASS.
 CLASS lcl_file_reader IMPLEMENTATION.
 
   METHOD get_extension.
+    "File extension in lower case (xlsx / csv).
     DATA(lv_file) = to_lower( iv_file ).
     FIND PCRE `\.([a-z0-9]+)$` IN lv_file SUBMATCHES rv_ext.
   ENDMETHOD.
 
   METHOD read.
+    "Read the template file from the PC or the application server and return the
+    "rows as raw string table. Supported: .xlsx and .csv.
     CASE get_extension( iv_file ).
       WHEN 'xlsx'.
         rt_raw = parse_xlsx( iv_xdata = read_binary( iv_file = iv_file iv_server = iv_server )
@@ -754,6 +768,8 @@ CLASS lcl_file_reader IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_binary.
+    "Read a file as xstring from the PC (GUI) or the application server.
+    "A local file can not be read in background.
     IF iv_server = abap_false.
       IF sy-batch = abap_true.
         RAISE EXCEPTION TYPE lcx_error
@@ -787,6 +803,7 @@ CLASS lcl_file_reader IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_text_lines.
+    "Read a text file line by line from the PC (GUI) or the application server.
     DATA lv_line TYPE string.
 
     IF iv_server = abap_false.
@@ -835,6 +852,7 @@ CLASS lcl_file_reader IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD parse_xlsx.
+    "Convert the content of an .xlsx file to raw rows (CL_FDT_XL_SPREADSHEET).
     FIELD-SYMBOLS: <lt_ws>   TYPE STANDARD TABLE,
                    <ls_line> TYPE any,
                    <lv_cell> TYPE any.
@@ -873,6 +891,8 @@ CLASS lcl_file_reader IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD parse_csv.
+    "Convert the lines of a .csv file to raw rows. The separator is detected in the
+    "header line (; , or TAB).
     CHECK it_lines IS NOT INITIAL.
 
     "Separator = most frequent of ; , TAB in the header line
@@ -954,10 +974,13 @@ CLASS lcl_config IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD constructor.
+    "Keep the log for the messages of the configuration.
     mo_log = io_log.
   ENDMETHOD.
 
   METHOD load.
+    "Load the configuration: active variant, field catalogue of the selected view
+    "tables, conditional mandatory rules and default values.
     get_variant( ).        "5.2
     get_fields( ).         "5.3 / 5.4
     get_cond_rules( ).
@@ -965,6 +988,8 @@ CLASS lcl_config IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_variant.
+    "Active variant (ZTMM_MATMAS_MAST) for material type, industry sector, business
+    "profile and operation selected on the screen. No variant = error.
     DATA(lv_opid) = lcl_screen=>get_operation( ).
 
     SELECT * FROM ztmm_matmas_mast
@@ -987,15 +1012,12 @@ CLASS lcl_config IMPLEMENTATION.
     SORT lt_mast BY valid_from DESCENDING.
     mv_variant = lt_mast[ 1 ]-variant_view.
 
-*    IF lines( lt_mast ) > 1.
-*      mo_log->add( iv_type = 'W'
-*                   iv_text = |{ lines( lt_mast ) } active entries found - variant { mv_variant } | &&
-*                             |(latest valid-from) used| ).
-*    ENDIF.
     mo_log->add( iv_type = 'S' iv_text = |Active variant { mv_variant } determined| ).
   ENDMETHOD.
 
   METHOD get_fields.
+    "Field catalogue: read the view tables (ZTMM_*_DATA) of the selected views for
+    "the active variant and parse the BAPI mapping of each field.
     DATA lt_db TYPE STANDARD TABLE OF ztmm_basic_data WITH EMPTY KEY.
 
     CLEAR mt_fcat.
@@ -1052,6 +1074,7 @@ CLASS lcl_config IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_cond_rules.
+    "Conditional mandatory rules (ZTMM_COND_MAND) of the active variant.
     SELECT * FROM ztmm_cond_mand
       INTO TABLE @mt_cond
       WHERE mat_type     = @p_mtart
@@ -1096,9 +1119,6 @@ CLASS lcl_config IMPLEMENTATION.
 
     IF lv_def IS INITIAL.
       IF is_fcat-system_derived = abap_false.
-*        mo_log->add( iv_type = 'W' iv_view = is_fcat-view iv_field = is_fcat-temp_field_name
-*                     iv_fdesc = is_fcat-description
-*                     iv_text = 'No BAPI field maintained - value is validated but not transferred' ).
       ENDIF.
       RETURN.
     ENDIF.
@@ -1154,10 +1174,13 @@ ENDCLASS.
 CLASS lcl_material_bapi IMPLEMENTATION.
 
   METHOD constructor.
+    "Keep the log for the messages of the BAPI calls.
     mo_log = io_log.
   ENDMETHOD.
 
   METHOD get_material_number.
+    "Material number of a template row: external number from MATNR or internal
+    "number (BAPI_MATERIAL_GETINTNUMBER). Test run without MATNR: temporary number.
     FIELD-SYMBOLS <lv_num> TYPE any.
     DATA: lt_number TYPE STANDARD TABLE OF bapimatinr,
           ls_return TYPE bapireturn1.
@@ -1185,10 +1208,6 @@ CLASS lcl_material_bapi IMPLEMENTATION.
     ENDIF.
     IF p_test = abap_true AND lcl_mapper=>is_dummy_key( is_row-matkey ) = abap_true.
       rv_matnr = lcl_template=>get_temp_matnr( is_row ).
-*      mo_log->add( iv_type = 'W' is_row = is_row
-*                   iv_text = 'Simulation skipped - no MATNR (internal number is assigned at posting)' ).
-*      RETURN.
-*    ENDIF.
     ELSE.
       CALL FUNCTION 'BAPI_MATERIAL_GETINTNUMBER'
         EXPORTING
@@ -1389,32 +1408,6 @@ CLASS lcl_material_bapi IMPLEMENTATION.
       IMPORTING
         return               = ls_return
       TABLES
-*       headdata             = ls_call-headdata
-*       clientdata           = ls_call-clientdata
-*       clientdatax          = ls_call-clientdatax
-*       plantdata            = ls_call-plantdata
-*       plantdatax           = ls_call-plantdatax
-*       forecastparameters   = ls_call-forecastparameters
-*       forecastparametersx  = ls_call-forecastparametersx
-*       planningdata         = ls_call-planningdata
-*       planningdatax        = ls_call-planningdatax
-*       storagelocationdata  = ls_call-storagelocationdata
-*       storagelocationdatax = ls_call-storagelocationdatax
-*       unitsofmeasure       = ls_call-unitsofmeasure
-*       unitsofmeasurex      = ls_call-unitsofmeasurex
-*       internationalartnos  = ls_call-internationalartnos
-*       materiallongtext     = ls_call-materiallongtext
-*       taxclassifications   = ls_call-taxclassifications
-*       valuationdata        = ls_call-valuationdata
-*       valuationdatax       = ls_call-valuationdatax
-*       warehousenumberdata  = ls_call-warehousenumberdata
-*       warehousenumberdatax = ls_call-warehousenumberdatax
-*       salesdata            = ls_call-salesdata
-*       salesdatax           = ls_call-salesdatax
-*       storagetypedata      = ls_call-storagetypedata
-*       storagetypedatax     = ls_call-storagetypedatax
-*       materialdescription  = ls_call-materialdescription
-*       returnmessages       = lt_retmsg.
         headdata             = ls_call-headdata
         clientdata           = ls_call-clientdata
         clientdatax          = ls_call-clientdatax
@@ -1499,6 +1492,9 @@ CLASS lcl_material_bapi IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD classify.
+    "Assign the material to its class and set the characteristic values
+    "(BAPI_OBJCL_CREATE / BAPI_OBJCL_CHANGE). Existing values are kept, values of
+    "the template overwrite those of the same characteristic.
     DATA: lv_objkey TYPE bapi1003_key-object,
           lt_char   TYPE STANDARD TABLE OF bapi1003_alloc_values_char,
           lt_num    TYPE STANDARD TABLE OF bapi1003_alloc_values_num,
@@ -1729,10 +1725,14 @@ ENDCLASS.
 CLASS lcl_output IMPLEMENTATION.
 
   METHOD constructor.
+    "Keep the log that is shown as output.
     mo_log = io_log.
   ENDMETHOD.
 
   METHOD publish.
+    "Create the ALV of the log, then (not in a test run) write the output file to
+    "the application server and send it by e-mail. Warnings are added to the log
+    "if path or recipients are missing.
     mt_out = mo_log->mt_msg.
     CHECK build_alv( ) = abap_true.
 
@@ -1766,6 +1766,7 @@ CLASS lcl_output IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD build_alv.
+    "ALV (CL_SALV_TABLE) of the log with title and column texts.
     TRY.
         cl_salv_table=>factory( IMPORTING r_salv_table = mo_alv
                                 CHANGING  t_table      = mt_out ).
@@ -1795,6 +1796,7 @@ CLASS lcl_output IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD to_xlsx.
+    "Convert the ALV to xlsx (initial if the conversion fails).
     TRY.
         rv_xdata = mo_alv->to_xml( xml_type = if_salv_bs_xml=>c_type_xlsx ).
       CATCH cx_root.
@@ -1803,10 +1805,13 @@ CLASS lcl_output IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD file_name.
+    "File name of the output file: MATMAINT_<operation>_<date>_<time>.xlsx.
     rv_name = |MATMAINT_{ lcl_screen=>get_operation( ) }_{ sy-datum }_{ sy-uzeit }.xlsx|.
   ENDMETHOD.
 
   METHOD save_to_server.
+    "Write the output file to the application server. P_FILE3 is a directory
+    "(ending with / or \) or a complete file name.
     CHECK p_file3 IS NOT INITIAL AND iv_xdata IS NOT INITIAL.
 
     "P_FILE3 = directory (ending with / or \) or complete file name
@@ -1833,6 +1838,8 @@ CLASS lcl_output IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD send_mail.
+    "Send the log (short summary text, xlsx attached) by e-mail to the
+    "recipients of S_EMAIL.
     DATA lt_body TYPE soli_tab.
     CHECK s_email[] IS NOT INITIAL.
 
@@ -1906,16 +1913,19 @@ CLASS lcl_template IMPLEMENTATION.
       `BWKEY BKLAS VPRSV STPRS VERPR BWTTY MLAST HKMAT ZKPRS ZKDAT ` &&
       `PO_TEXT PRODH_LVL1 PRODH_LVL2 PRODH_LVL3 PRODH_LVL4 PRODH_LVL5`.
 
-
     SPLIT lv_cols AT space INTO TABLE rt_cols.
     DELETE rt_cols WHERE table_line IS INITIAL.
   ENDMETHOD.
 
   METHOD get_temp_matnr.
+    "Temporary material number for a test run when the template has no MATNR.
     rv_matnr = |TEMPMATNR_{ is_row-row }|.
   ENDMETHOD.
 
   METHOD download.
+    "Generate the upload template as .xlsx: template columns plus the fields of the
+    "active variant; the header colour shows mandatory / conditional mandatory /
+    "system derived / control columns.
     DATA: lt_fcat    TYPE tt_fcat,
           lt_cols    TYPE tt_col,
           lv_variant TYPE string,
@@ -1991,6 +2001,8 @@ CLASS lcl_template IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD build_xlsx.
+    "Build the template as .xlsx (Office Open XML packed with CL_ABAP_ZIP):
+    "template sheet, information sheet and styles.
     DATA(lo_zip) = NEW cl_abap_zip( ).
 
     lo_zip->add( name    = '[Content_Types].xml'
@@ -2182,6 +2194,7 @@ CLASS lcl_template IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD cell.
+    "XML of one text cell of the template sheet.
     rv_xml = |<c r="{ col_letter( iv_col ) }{ iv_row }" t="inlineStr" s="{ iv_style }">| &&
              |<is><t xml:space="preserve">| &&
              escape( val = CONV string( iv_value ) format = cl_abap_format=>e_xml_text ) &&
@@ -2199,6 +2212,7 @@ CLASS lcl_template IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD utf8.
+    "Convert XML text to UTF-8 (xstring).
     rv_x = cl_abap_codepage=>convert_to( iv_xml ).
   ENDMETHOD.
 
@@ -2210,16 +2224,20 @@ ENDCLASS.
 CLASS lcl_screen IMPLEMENTATION.
 
   METHOD initialization.
+    "Initial screen values (text of the template download button).
     p_btn = 'Download Template'(b01).
   ENDMETHOD.
 
   METHOD get_operation.
+    "Operation selected on the screen: create / update / extend.
     rv_opid = COND #( WHEN r_create = abap_true THEN gc_op-create
                       WHEN r_update = abap_true THEN gc_op-update
                       ELSE                           gc_op-extend ).
   ENDMETHOD.
 
   METHOD pbo.
+    "Screen output: file input depends on PC / server, basic data checkbox is fixed
+    "to X and not editable, listboxes are filled.
     LOOP AT SCREEN.
       CASE screen-group1.
         WHEN 'MD1'.
@@ -2314,6 +2332,8 @@ CLASS lcl_screen IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD pai.
+    "Screen input: template download button; check of the input before execute,
+    "background run and print.
     CASE sscrfields-ucomm.
       WHEN 'BTN_CLK'.
         download_template( ).
@@ -2323,6 +2343,8 @@ CLASS lcl_screen IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD check_input.
+    "Check the selection screen: material type / industry sector / business profile,
+    "at least one view, template file and its extension, e-mail recipients.
     IF p_mtart IS INITIAL OR p_indsec IS INITIAL OR p_busprf IS INITIAL.
       MESSAGE 'Select material type, industry sector and business profile'(e01) TYPE 'E'.
     ENDIF.
@@ -2354,6 +2376,7 @@ CLASS lcl_screen IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD f4_local_file.
+    "F4 help for the template file on the PC (file open dialog).
     DATA: lt_files TYPE filetable,
           lv_rc    TYPE i.
     cl_gui_frontend_services=>file_open_dialog(
@@ -2367,13 +2390,10 @@ CLASS lcl_screen IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD download_template.
-
-
+    "Download of the template file for the selected operation from the SMW0 objects
+    "(create / update / extend).
 
     "Upload template (.xlsx) as reference for the user
-
-*    lcl_template=>download( ).
-
 
     TYPES:
       BEGIN OF ty_template_result,
@@ -2405,17 +2425,16 @@ CLASS lcl_screen IMPLEMENTATION.
     ls_result-object_id      = lv_object_id.
     ls_result-mime_type      =
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'.
-*    ls_result-content = read_smw0_binary( lv_object_id ).
-
 
     DATA(lv_result) = download_from_smw0(
      iv_objid  = lv_object_id
      iv_target = '' ).
 
-
   ENDMETHOD.
 
   METHOD download_from_smw0.
+    "Download a binary object (MIME) from SMW0 to a file on the PC. Returns true if
+    "the file was saved.
     DATA: ls_key      TYPE wwwdatatab,
           lt_mime     TYPE STANDARD TABLE OF w3mime,
           lt_params   TYPE STANDARD TABLE OF wwwparams,
@@ -2503,34 +2522,6 @@ CLASS lcl_screen IMPLEMENTATION.
     MESSAGE |File downloaded to { lv_target }| TYPE 'S'.
   ENDMETHOD.
 
-*  METHOD read_smw0_binary.
-*    DATA ls_key  TYPE wwwdatatab.
-*    DATA lt_mime TYPE STANDARD TABLE OF w3mime.
-*
-*    ls_key-relid = 'MI'.
-*    ls_key-objid = iv_object_id.
-*
-*    CALL FUNCTION 'WWWDATA_IMPORT'
-*      EXPORTING
-*        key               = ls_key
-*      TABLES
-*        mime              = lt_mime
-*      EXCEPTIONS
-*        wrong_object_type = 1
-*        import_error      = 2
-*        OTHERS            = 3.
-*
-*    IF sy-subrc <> 0 OR lt_mime IS INITIAL.
-*      RAISE EXCEPTION TYPE zcx_mm_template_error
-*        EXPORTING
-*          textid    = zcx_mm_template_error=>object_not_found
-*          object_id = iv_object_id.
-*    ENDIF.
-*
-*    rv_content = zcl_mm_binary_helper=>w3mime_to_xstring( lt_mime ).
-*  ENDMETHOD.
-
-
 ENDCLASS.
 
 *======================================================================*
@@ -2539,12 +2530,15 @@ ENDCLASS.
 CLASS lcl_app IMPLEMENTATION.
 
   METHOD constructor.
+    "Create the log, the configuration and the BAPI handler.
     mo_log    = NEW #( ).
     mo_config = NEW #( mo_log ).
     mo_bapi   = NEW #( mo_log ).
   ENDMETHOD.
 
   METHOD run.
+    "Main flow: load configuration and template, derive and check data, validate
+    "and map the rows, post the materials and show the log.
     TRY.
         mo_config->load( ).          "5.2 variant, 5.3/5.4 view tables
         load_template( ).            "5.1 read template
@@ -2558,9 +2552,6 @@ CLASS lcl_app IMPLEMENTATION.
     ENDTRY.
 
     DATA(lv_err) = mo_log->count( 'E' ).
-*    mo_log->add( iv_type = COND #( WHEN lv_err > 0 THEN 'W' ELSE 'S' )
-*                 iv_text = |Validation finished: { lines( mt_row ) } row(s), { lv_err } error(s), | &&
-*                           |{ mo_log->count( 'W' ) } warning(s)| ).
 
     IF mo_log->has_global_error( ) = abap_true.
       mo_log->add( iv_type = 'E'
@@ -2577,6 +2568,8 @@ CLASS lcl_app IMPLEMENTATION.
 * 5.1 - template
 *----------------------------------------------------------------------*
   METHOD load_template.
+    "Read the template: header row = technical field names, data rows = non-empty
+    "cells (MT_CELL) and the list of rows with their keys (MT_ROW).
     DATA lv_has_data TYPE abap_bool.
 
     DATA(lv_file) = COND string( WHEN r_local = abap_true THEN p_file1 ELSE p_file2 ).
@@ -2593,22 +2586,6 @@ CLASS lcl_app IMPLEMENTATION.
       APPEND lv_field TO mt_header.
     ENDLOOP.
 
-*    CLEAR: lv_field.
-*    IF line_exists( mt_header[ table_line = 'MEINS' ] ).
-*      IF NOT line_exists( mt_header[ table_line = 'MEINH' ] )  .
-*        lv_field = CONV fieldname( 'MEINH' ).
-*        APPEND lv_field TO mt_header.
-*      ENDIF.
-*      IF NOT line_exists( mt_header[ table_line = 'UMREZ' ] )  .
-*        lv_field = CONV fieldname( 'UMREZ' ).
-*        APPEND lv_field TO mt_header.
-*      ENDIF.
-*      IF NOT line_exists( mt_header[ table_line = 'UMREN' ] )  .
-*        lv_field = CONV fieldname( 'UMREN' ).
-*        APPEND lv_field TO mt_header.
-*      ENDIF.
-*    ENDIF.
-
     "Data rows: keep non-empty cells only
     LOOP AT lt_raw INTO DATA(lt_values) FROM gc_data_row.
       DATA(lv_row) = sy-tabix.                            "= row number in the file
@@ -2621,14 +2598,8 @@ CLASS lcl_app IMPLEMENTATION.
         DATA(lv_value) = lcl_mapper=>trim( lv_raw ).
         CHECK lv_value IS NOT INITIAL.
         INSERT VALUE #( row = lv_row field = lv_colname value = lv_value ) INTO TABLE mt_cell.
-*        IF lv_colname = 'MEINS' AND lv_value IS NOT INITIAL.
-*          INSERT VALUE #( row = lv_row field = 'MEINH' value = lv_value ) INTO TABLE mt_cell.
-*          INSERT VALUE #( row = lv_row field = 'UMREN' value = '1' ) INTO TABLE mt_cell.
-*          INSERT VALUE #( row = lv_row field = 'UMREZ' value = '1' ) INTO TABLE mt_cell.
-*        ENDIF.
         lv_has_data = abap_true.
       ENDLOOP.
-
 
       CHECK lv_has_data = abap_true.                      "skip empty lines
       DATA(lv_matnr) = to_upper( get_value( iv_row = lv_row iv_field = gc_col-matnr ) ).
@@ -2949,16 +2920,11 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD check_columns.
+    "Mandatory fields of the view tables that are no template column (unless a
+    "default value exists) are reported as errors.
     DATA(lt_ctrl) = lcl_config=>control_columns( ).
 
     "Columns not maintained in any selected view table
-*    LOOP AT mt_header INTO DATA(lv_col) WHERE table_line IS NOT INITIAL.
-*      CHECK NOT line_exists( lt_ctrl[ table_line = lv_col ] ).
-*      CHECK NOT line_exists( mo_config->mt_fcat[ KEY k_field COMPONENTS temp_field_name = lv_col ] ).
-*      CHECK lv_col NP 'PRODH_LVL*'.
-*      mo_log->add( iv_type = 'W' iv_field = lv_col
-*                   iv_text = 'Column not maintained in the view tables of the selected views - ignored' ).
-*    ENDLOOP.
 
     "Mandatory fields that are no column of the template
     LOOP AT mo_config->mt_fcat INTO DATA(ls_fcat) WHERE mandatory = abap_true.
@@ -2975,18 +2941,10 @@ CLASS lcl_app IMPLEMENTATION.
 * 5.5 - validation and mapping, row by row
 *----------------------------------------------------------------------*
   METHOD validate_and_map.
+    "Step 5.5: per template row copy the reference material, validate the fields
+    "and map them to the BAPI structures (MT_BAPI).
     DATA(lv_fixed_comp) = 'ROW_NO  ACTION  STATUS  MESSAGE PROCESS_PROFILE REFERENCE_MATNR REF_WERKS REF_LGORT ' &&
           ' REF_VKORG  REF_VTWEG REF_EKORG DEFAULT_MODE  COPY_BASIC  COPY_PURCH  COPY_MRP  COPY_FRCST  COPY_SALES  COPY_ACCOUNTING COPY_CLASS DEFAULT_SUMMARY MATNR '.
-*    LOOP AT mt_row INTO DATA(ls_row).
-*      DATA(ls_bapi) = VALUE ty_bapi( row = ls_row-row matkey = ls_row-matkey ).
-*
-*      check_row_control( ls_row ).
-*      copy_reference( EXPORTING is_row = ls_row CHANGING cs_bapi = ls_bapi ).
-*      validate_row(   EXPORTING is_row = ls_row CHANGING cs_bapi = ls_bapi ).
-*      check_existence( is_row = ls_row is_bapi = ls_bapi ).
-*
-*      APPEND ls_bapi TO mt_bapi.
-*    ENDLOOP.
     DATA: lt_comp TYPE string_table.
     SPLIT lv_fixed_comp AT space INTO TABLE lt_comp.
     CONSTANTS lc_org_params TYPE string VALUE
@@ -3003,11 +2961,8 @@ CLASS lcl_app IMPLEMENTATION.
                                 et_views = DATA(lt_ref_views)
                       CHANGING  cs_bapi  = ls_bapi ).
       LOOP AT mt_cell INTO DATA(ls_cell) WHERE row = ls_row-row.
-*        CHECK not ( ls_cell-field <> 'ACTION' AND ls_cell-field <> 'ROW_NO' ).
         DATA(lv_comp) = VALUE #( lt_comp[ table_line = ls_cell-field  ] OPTIONAL ).
         CHECK lv_comp <> ls_cell-field.
-
-*        DATA(ls_fcat) = VALUE #( mo_config->mt_fcat[ temp_field_name = ls_cell-field ] OPTIONAL ).
 
         DATA(lt_fcat) = FILTER #( mo_config->mt_fcat USING KEY k_field WHERE temp_field_name = ls_cell-field ).
 
@@ -3083,6 +3038,8 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD check_row_control.
+    "Check the control columns of a row: ACTION against the operation on the screen,
+    "COPY_* flags and reference columns.
     DATA(lv_opid) = lcl_screen=>get_operation( ).
 
     "ACTION column must match the action selected on the screen
@@ -3573,7 +3530,6 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD validate_row.
     "Step 5.5.1 - one pass over the field catalogue of all selected views
-*    LOOP AT mo_config->mt_fcat INTO DATA(ls_fcat).
 
     DATA(ls_fcat)     = is_fcat.
     DATA(lv_value)    = get_value( iv_row = is_row-row iv_field = ls_fcat-temp_field_name ).
@@ -3619,7 +3575,6 @@ CLASS lcl_app IMPLEMENTATION.
                    CHANGING  cs_bapi = cs_bapi ).
       ENDIF.
     ENDIF.
-*    ENDLOOP.
 
     "Classification consistency: CHECK_CLASSIFICATION (once all values of
     "the row are mapped - the class may come from a later column, the
@@ -4121,6 +4076,8 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD check_existence.
+    "Check the existence of the material and its org. levels (plant, storage
+    "location, sales area, valuation area ...) according to the operation.
     TYPES: BEGIN OF lty_org,
              text   TYPE string,
              exists TYPE abap_bool,
@@ -4239,6 +4196,9 @@ CLASS lcl_app IMPLEMENTATION.
 * Simulation / posting
 *----------------------------------------------------------------------*
   METHOD process_materials.
+    "Post the materials: per template row one BAPI_MATERIAL_SAVEREPLICA call, then
+    "the classification. Test run: checks only, the update is rolled back. The
+    "result is written to the log.
     FIELD-SYMBOLS <ls_class> TYPE ty_bapi.
     DATA: lt_err_mat  TYPE SORTED TABLE OF string WITH UNIQUE KEY table_line,
           lt_seen     TYPE SORTED TABLE OF string WITH UNIQUE KEY table_line,
@@ -4473,7 +4433,6 @@ CLASS lcl_app IMPLEMENTATION.
     "Header: type, industry sector, view indicators (screen AND data supplied)
     ls_head-matl_type  = p_mtart.
     ls_head-ind_sector = p_indsec.
-*    ls_head-basic_view    = COND #( WHEN abap   = abap_true AND line_exists( lt_views[ table_line = gc_view-basic  ] ) THEN abap_true ).
     ls_head-basic_view    = xsdbool( lv_extend = abap_false ).
     ls_head-purchase_view = COND #( WHEN p_purch  = abap_true AND line_exists( lt_views[ table_line = gc_view-purch  ] ) THEN abap_true ).
     ls_head-mrp_view      = COND #( WHEN p_mrp   = abap_true AND line_exists( lt_views[ table_line = gc_view-mrp    ] ) THEN abap_true ).
@@ -4481,10 +4440,6 @@ CLASS lcl_app IMPLEMENTATION.
     ls_head-storage_view  = COND #( WHEN p_plntst = abap_true AND line_exists( lt_views[ table_line = gc_view-plntst ] ) THEN abap_true ).
     ls_head-sales_view    = COND #( WHEN p_sales = abap_true AND line_exists( lt_views[ table_line = gc_view-sales  ] ) THEN abap_true ).
     ls_head-account_view  = COND #( WHEN p_val  = abap_true AND line_exists( lt_views[ table_line = gc_view-val    ] ) THEN abap_true ).
-*    ls_head-forecast_view  = COND #( WHEN ls_head-mrp_view = abap_true AND rs_call-forecastparameters IS NOT INITIAL
-*                                     THEN abap_true ).
-*    ls_head-warehouse_view = COND #( WHEN ls_head-storage_view = abap_true AND rs_call-warehousenumberdata IS NOT INITIAL
-*                                     THEN abap_true ).
     APPEND ls_head TO rs_call-headdata.
 
     "Material number in all lines, then the X tables
@@ -4496,6 +4451,7 @@ CLASS lcl_app IMPLEMENTATION.
 * Helpers
 *----------------------------------------------------------------------*
   METHOD get_value.
+    "Value of a template cell (initial if not maintained).
     rv_value = VALUE #( mt_cell[ row = iv_row field = iv_field ]-value OPTIONAL ).
   ENDMETHOD.
 
@@ -4507,6 +4463,7 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD is_flag_set.
+    "COPY_* columns: X, Y, YES, 1 or TRUE set the flag.
     DATA(lv_flag) = to_upper( get_value( iv_row = iv_row iv_field = iv_field ) ).
     rv_set = COND #( WHEN lv_flag = 'X' OR lv_flag = 'Y' OR lv_flag = 'YES' OR
                           lv_flag = '1' OR lv_flag = 'TRUE'
