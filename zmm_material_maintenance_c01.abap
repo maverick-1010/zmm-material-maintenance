@@ -168,6 +168,10 @@ CLASS lcl_material_bapi DEFINITION FINAL.
                                     iv_bwkey      TYPE bwkey OPTIONAL
                           RETURNING VALUE(rs_ref) TYPE ty_bapi
                           RAISING   lcx_error,
+      save_sales_text     IMPORTING is_row       TYPE ty_row
+                                    iv_matnr     TYPE matnr
+                                    iv_text      TYPE string
+                          RETURNING VALUE(rv_ok) TYPE abap_bool,
       save_material       IMPORTING is_call      TYPE ty_call
                                     it_rows      TYPE tt_row
                                     iv_matnr     TYPE matnr
@@ -331,6 +335,7 @@ CLASS lcl_app DEFINITION FINAL.
       check_columns,
       validate_and_map,
       prefetch_existence,
+      check_sales_text       IMPORTING is_row TYPE ty_row,
       check_row_control      IMPORTING is_row  TYPE ty_row,
       copy_reference         IMPORTING is_row   TYPE ty_row
                              EXPORTING es_ref   TYPE ty_bapi

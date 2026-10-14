@@ -53,6 +53,7 @@ CONSTANTS:
     vkorg      TYPE fieldname VALUE 'VKORG',
     vtweg      TYPE fieldname VALUE 'VTWEG',
     prdha      TYPE fieldname VALUE 'PRDHA',
+    sales_text TYPE fieldname VALUE 'SALES_TEXT',   "sales text (text object MVKE)
   END OF gc_col,
 
   gc_hdr_row        TYPE i         VALUE 3,          "header = technical names
@@ -61,6 +62,8 @@ CONSTANTS:
   gc_objtab_mara    TYPE tabelle   VALUE 'MARA',     "classification object table
   gc_def_classtype  TYPE klassenart VALUE '001',     "default class type
   gc_max_longtext   TYPE i         VALUE 132,       "max. length of a material long text
+  gc_stext_object   TYPE tdobject  VALUE 'MVKE',    "sales text: text object
+  gc_stext_id       TYPE tdid      VALUE '0001',    "sales text: text id
   "Conditional mandatory: check CONDMAT_FIELD only if SOURCE_FIELD is filled
   gc_cond_if_source TYPE abap_bool VALUE abap_true,
   "Test run + Create without MATNR: draw internal number to simulate?

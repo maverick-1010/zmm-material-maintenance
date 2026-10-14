@@ -974,7 +974,8 @@ CLASS lcl_config IMPLEMENTATION.
                        ( gc_col-ref_vkorg )  ( gc_col-ref_vtweg )  ( gc_col-ref_ekorg )
                        ( gc_col-def_mode )
                        ( gc_col-copy_basic ) ( gc_col-copy_purch ) ( gc_col-copy_mrp ) ( gc_col-copy_frcst )
-                       ( gc_col-copy_sales ) ( gc_col-copy_acct )  ( gc_col-copy_class ) ).
+                       ( gc_col-copy_sales ) ( gc_col-copy_acct )  ( gc_col-copy_class )
+                       ( gc_col-sales_text ) ).
   ENDMETHOD.
 
   METHOD constructor.
@@ -1389,6 +1390,94 @@ CLASS lcl_material_bapi IMPLEMENTATION.
     ENDLOOP.
 
     APPEND VALUE #( key = lv_key data = rs_ref ) TO mt_cache.
+  ENDMETHOD.
+
+  METHOD save_sales_text.
+    "Sales text of a sales area (text object MVKE, ID 0001, name = material +
+    "sales org. + distribution channel). Not part of BAPI_MATERIAL_SAVEREPLICA,
+    "saved with SAVE_TEXT after the material was posted. Lines of the cell are
+    "split at line breaks and at the line length of the text editor (132).
+    DATA: ls_header TYPE thead,
+          lt_lines  TYPE STANDARD TABLE OF tline WITH EMPTY KEY,
+          lv_name   TYPE tdobname,
+          lv_rest   TYPE string,
+          lv_len    TYPE i,
+          lv_dummy  TYPE matnr.
+
+    "Test run: nothing is written (the material may not exist yet)
+    IF p_test = abap_true.
+      mo_log->add( iv_type = 'S' is_row = is_row iv_matnr = iv_matnr iv_field = gc_col-sales_text
+                   iv_text = |Simulation OK - sales text for sales area { is_row-vkorg }/{ is_row-vtweg } | &&
+                             |checked, not saved in a test run| ).
+      rv_ok = abap_true.
+      RETURN.
+    ENDIF.
+
+    "The sales area must exist for the material (created by the BAPI or before)
+    SELECT SINGLE matnr FROM mvke INTO @lv_dummy
+      WHERE matnr = @iv_matnr AND vkorg = @is_row-vkorg AND vtweg = @is_row-vtweg.
+    IF sy-subrc <> 0.
+      mo_log->add( iv_type = 'E' is_row = is_row iv_matnr = iv_matnr iv_field = gc_col-sales_text
+                   iv_text = |Sales text not saved - sales area { is_row-vkorg }/{ is_row-vtweg } | &&
+                             |does not exist for the material| ).
+      RETURN.
+    ENDIF.
+
+    "Text lines: line breaks of the cell, long lines wrapped
+    DATA(lv_text) = replace( val = iv_text sub = cl_abap_char_utilities=>cr_lf
+                             with = cl_abap_char_utilities=>newline occ = 0 ).
+    SPLIT lv_text AT cl_abap_char_utilities=>newline INTO TABLE DATA(lt_split).
+    LOOP AT lt_split INTO DATA(lv_line).
+      IF lv_line IS INITIAL.
+        APPEND VALUE #( tdformat = '*' ) TO lt_lines.
+        CONTINUE.
+      ENDIF.
+      lv_rest = lv_line.
+      WHILE lv_rest IS NOT INITIAL.
+        lv_len = nmin( val1 = strlen( lv_rest ) val2 = gc_max_longtext ).
+        APPEND VALUE #( tdformat = '*' tdline = lv_rest(lv_len) ) TO lt_lines.
+        lv_rest = substring( val = lv_rest off = lv_len ).
+      ENDWHILE.
+    ENDLOOP.
+
+    "Text name = MATNR (field length) + VKORG + VTWEG
+    DESCRIBE FIELD iv_matnr LENGTH DATA(lv_mlen) IN CHARACTER MODE.
+    lv_name = iv_matnr.
+    lv_name+lv_mlen(4) = is_row-vkorg.
+    DATA(lv_off) = lv_mlen + 4.
+    lv_name+lv_off(2) = is_row-vtweg.
+
+    ls_header = VALUE #( tdobject = gc_stext_object tdname = lv_name
+                         tdid = gc_stext_id tdspras = sy-langu ).
+
+    CALL FUNCTION 'SAVE_TEXT'
+      EXPORTING
+        header          = ls_header
+        savemode_direct = abap_true
+      TABLES
+        lines           = lt_lines
+      EXCEPTIONS
+        id              = 1
+        language        = 2
+        name            = 3
+        object          = 4
+        OTHERS          = 5.
+    IF sy-subrc <> 0.
+      DATA(lv_subrc) = sy-subrc.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      mo_log->add( iv_type = 'E' is_row = is_row iv_matnr = iv_matnr iv_field = gc_col-sales_text
+                   iv_text = |Sales text for sales area { is_row-vkorg }/{ is_row-vtweg } | &&
+                             |not saved (SAVE_TEXT subrc { lv_subrc })| ).
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = abap_true.
+    mo_log->add( iv_type = 'S' is_row = is_row iv_matnr = iv_matnr iv_field = gc_col-sales_text
+                 iv_text = |Posted - sales text for sales area { is_row-vkorg }/{ is_row-vtweg } | &&
+                           |({ lines( lt_lines ) } line(s))| ).
+    rv_ok = abap_true.
   ENDMETHOD.
 
   METHOD save_material.
@@ -1915,7 +2004,7 @@ CLASS lcl_template IMPLEMENTATION.
       `DISGR ABCIN BSTRF SHFLG SHZET STRGR VRMOD VINT1 VINT2 MTVFP2 CCFIX PRMOD ` &&
       `LGNUM LGTYP LGBKZ LTKZE LHMG1 LVSME LETY1 LTKZA ` &&
       `BWKEY BKLAS VPRSV STPRS VERPR BWTTY MLAST HKMAT ZKPRS ZKDAT ` &&
-      `PO_TEXT PRODH_LVL1 PRODH_LVL2 PRODH_LVL3 PRODH_LVL4 PRODH_LVL5`.
+      `PO_TEXT SALES_TEXT PRODH_LVL1 PRODH_LVL2 PRODH_LVL3 PRODH_LVL4 PRODH_LVL5`.
 
     SPLIT lv_cols AT space INTO TABLE rt_cols.
     DELETE rt_cols WHERE table_line IS INITIAL.
@@ -2948,7 +3037,7 @@ CLASS lcl_app IMPLEMENTATION.
     "Step 5.5: per template row copy the reference material, validate the fields
     "and map them to the BAPI structures (MT_BAPI).
     DATA(lv_fixed_comp) = 'ROW_NO  ACTION  STATUS  MESSAGE PROCESS_PROFILE REFERENCE_MATNR REF_WERKS REF_LGORT ' &&
-          ' REF_VKORG  REF_VTWEG REF_EKORG DEFAULT_MODE  COPY_BASIC  COPY_PURCH  COPY_MRP  COPY_FRCST  COPY_SALES  COPY_ACCOUNTING COPY_CLASS DEFAULT_SUMMARY MATNR '.
+          ' REF_VKORG  REF_VTWEG REF_EKORG DEFAULT_MODE  COPY_BASIC  COPY_PURCH  COPY_MRP  COPY_FRCST  COPY_SALES  COPY_ACCOUNTING COPY_CLASS DEFAULT_SUMMARY MATNR SALES_TEXT '.
     DATA: lt_split TYPE string_table,
           lt_comp  TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
     SPLIT lv_fixed_comp AT space INTO TABLE lt_split.
@@ -3018,6 +3107,9 @@ CLASS lcl_app IMPLEMENTATION.
       apply_defaults( EXPORTING is_row = ls_row CHANGING cs_bapi = ls_bapi ).
       apply_unit_defaults( EXPORTING is_row = ls_row CHANGING cs_bapi = ls_bapi ).
       apply_current_date( EXPORTING is_row = ls_row CHANGING cs_bapi = ls_bapi ).
+
+      "Sales text (text object MVKE): not part of the BAPI, saved after the material
+      check_sales_text( ls_row ).
 
       "Classification: values, class master, single values
       check_classification( EXPORTING is_row = ls_row CHANGING cs_bapi = ls_bapi ).
@@ -3104,6 +3196,22 @@ CLASS lcl_app IMPLEMENTATION.
     SELECT matnr, lgnum FROM mlgn
       FOR ALL ENTRIES IN @lt_for WHERE matnr = @lt_for-matnr
       INTO CORRESPONDING FIELDS OF TABLE @mt_ex_mlgn.
+  ENDMETHOD.
+
+  METHOD check_sales_text.
+    "SALES_TEXT: long text of the sales area (text object MVKE, ID 0001). It is saved
+    "per sales area after the material, so the row needs sales organization and
+    "distribution channel and the sales view must be selected.
+    CHECK get_value( iv_row = is_row-row iv_field = gc_col-sales_text ) IS NOT INITIAL.
+
+    IF p_sales = abap_false.
+      mo_log->add( iv_type = 'E' is_row = is_row iv_field = gc_col-sales_text
+                   iv_text = 'SALES_TEXT can not be saved - sales view is not selected' ).
+    ENDIF.
+    IF is_row-vkorg IS INITIAL OR is_row-vtweg IS INITIAL.
+      mo_log->add( iv_type = 'E' is_row = is_row iv_field = gc_col-sales_text
+                   iv_text = 'SALES_TEXT needs sales organization (VKORG) and distribution channel (VTWEG)' ).
+    ENDIF.
   ENDMETHOD.
 
   METHOD check_row_control.
@@ -4295,16 +4403,24 @@ CLASS lcl_app IMPLEMENTATION.
       "    basic data of the material + org. levels of this row only
       DATA(lv_mat_ok) = abap_true.
       LOOP AT mt_row INTO DATA(ls_mrow) USING KEY k_mat WHERE matkey = lv_matkey.
-        IF mo_bapi->save_material( is_call  = build_call( iv_matkey = lv_matkey
-                                                          iv_matnr  = lv_matnr
-                                                          iv_row    = ls_mrow-row )
-                                   it_rows  = VALUE #( ( ls_mrow ) )
-                                   iv_matnr = lv_matnr ) = abap_false.
+        DATA(lv_row_ok) = mo_bapi->save_material( is_call  = build_call( iv_matkey = lv_matkey
+                                                                         iv_matnr  = lv_matnr
+                                                                         iv_row    = ls_mrow-row )
+                                                  it_rows  = VALUE #( ( ls_mrow ) )
+                                                  iv_matnr = lv_matnr ).
+        IF lv_row_ok = abap_false.
           lv_mat_ok = abap_false.
           IF p_test = abap_false.
             mo_log->add( iv_type = 'W' is_row = ls_mrow
                          iv_text = 'Remaining rows of this material not posted after the error' ).
             EXIT.                                   "posting: stop this material
+          ENDIF.
+        ELSE.
+          "Sales text (text object MVKE) of the sales area of this row
+          DATA(lv_stext) = get_value( iv_row = ls_mrow-row iv_field = gc_col-sales_text ).
+          IF lv_stext IS NOT INITIAL AND
+             mo_bapi->save_sales_text( is_row = ls_mrow iv_matnr = lv_matnr iv_text = lv_stext ) = abap_false.
+            lv_mat_ok = abap_false.
           ENDIF.
         ENDIF.
       ENDLOOP.
