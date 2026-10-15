@@ -3044,27 +3044,35 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD check_record_limit.
-    "Hard error if the file has more data rows than allowed for the run mode
-    "(foreground / background) and the operation, see GC_MAX_ROWS.
+    "Error (nothing is processed) if the file has too many data rows, see GC_MAX_ROWS:
+    "  more than HARD (foreground and background) - split the file
+    "  more than FG in foreground                  - run in background
     DATA(lv_op)    = lcl_screen=>get_operation( ).
     DATA(lv_count) = lines( mt_row ).
+    DATA(lv_opname) = SWITCH string( lv_op WHEN gc_op-create THEN `Create`
+                                           WHEN gc_op-update THEN `Update`
+                                           ELSE `Extend` ).
 
-    DATA(lv_max) = COND i(
-      WHEN sy-batch = abap_true
-        THEN SWITCH i( lv_op WHEN gc_op-create THEN gc_max_rows-bg-create
-                             WHEN gc_op-update THEN gc_max_rows-bg-update
-                             WHEN gc_op-extend THEN gc_max_rows-bg-extend )
-        ELSE SWITCH i( lv_op WHEN gc_op-create THEN gc_max_rows-fg-create
-                             WHEN gc_op-update THEN gc_max_rows-fg-update
-                             WHEN gc_op-extend THEN gc_max_rows-fg-extend ) ).
-    CHECK lv_max > 0 AND lv_count > lv_max.
+    DATA(lv_hard) = SWITCH i( lv_op WHEN gc_op-create THEN gc_max_rows-hard-create
+                                    WHEN gc_op-update THEN gc_max_rows-hard-update
+                                    WHEN gc_op-extend THEN gc_max_rows-hard-extend ).
+    IF lv_hard > 0 AND lv_count > lv_hard.
+      RAISE EXCEPTION TYPE lcx_error
+        EXPORTING
+          iv_text = |File has { lv_count } records - maximum is { lv_hard } for { lv_opname } | &&
+                    |(foreground and background) - split the file, nothing was processed|.
+    ENDIF.
 
-    RAISE EXCEPTION TYPE lcx_error
-      EXPORTING
-        iv_text = |File has { lv_count } records - maximum is { lv_max } for { SWITCH string( lv_op
-                    WHEN gc_op-create THEN `Create` WHEN gc_op-update THEN `Update` ELSE `Extend` ) } | &&
-                  |in { COND string( WHEN sy-batch = abap_true THEN `background` ELSE `foreground` ) } - | &&
-                  |split the file, nothing was processed|.
+    CHECK sy-batch = abap_false.
+    DATA(lv_fg) = SWITCH i( lv_op WHEN gc_op-create THEN gc_max_rows-fg-create
+                                  WHEN gc_op-update THEN gc_max_rows-fg-update
+                                  WHEN gc_op-extend THEN gc_max_rows-fg-extend ).
+    IF lv_fg > 0 AND lv_count > lv_fg.
+      RAISE EXCEPTION TYPE lcx_error
+        EXPORTING
+          iv_text = |File has { lv_count } records - more than { lv_fg } records ({ lv_opname }) | &&
+                    |can not be processed in foreground, please run in background|.
+    ENDIF.
   ENDMETHOD.
 
   METHOD check_defaults.
