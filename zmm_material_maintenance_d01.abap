@@ -396,10 +396,17 @@ TYPES:
 
   "Output file, sheet 2: data of the successfully posted materials
   BEGIN OF ty_kv,
-    name  TYPE string,
+    name  TYPE string,                 "technical name (PARAM-FIELD)
     value TYPE string,
+    label TYPE string,                 "column header: field description
   END OF ty_kv,
-  tt_kv TYPE STANDARD TABLE OF ty_kv WITH EMPTY KEY,
+  tt_kv      TYPE STANDARD TABLE OF ty_kv WITH EMPTY KEY,
+  tt_kv_hash TYPE HASHED TABLE OF ty_kv WITH UNIQUE KEY name,
+  BEGIN OF ty_ddicbuf,                 "DDIC field texts of a structure type
+    name   TYPE string,
+    fields TYPE ddfields,
+  END OF ty_ddicbuf,
+  tt_ddicbuf TYPE HASHED TABLE OF ty_ddicbuf WITH UNIQUE KEY name,
   BEGIN OF ty_postkey,                 "posted template row
     row   TYPE i,
     matnr TYPE matnr,

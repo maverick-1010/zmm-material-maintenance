@@ -1852,9 +1852,32 @@ CLASS lcl_material_bapi IMPLEMENTATION.
   METHOD flatten_struct.
     "Components of a structure that are elementary and not initial, as
     "<prefix><component> = value. Key fields that repeat the material number are left out.
-    DATA lv_type TYPE c LENGTH 1.
+    DATA: lv_type  TYPE c LENGTH 1,
+          lt_dfies TYPE ddfields,
+          lv_text  TYPE string.
 
     DATA(lo_desc) = CAST cl_abap_structdescr( cl_abap_typedescr=>describe_by_data( is_data ) ).
+
+    "field descriptions of the structure type (DDIC), read once per type
+    DATA(lv_tname) = CONV string( lo_desc->absolute_name ).
+    ASSIGN mt_ddic[ name = lv_tname ] TO FIELD-SYMBOL(<ls_ddic>).
+    IF sy-subrc <> 0.
+      CLEAR lt_dfies.
+      CALL METHOD lo_desc->get_ddic_field_list
+        EXPORTING
+          p_langu      = sy-langu
+        RECEIVING
+          p_field_list = lt_dfies
+        EXCEPTIONS
+          not_found    = 1
+          no_ddic_type = 2
+          OTHERS       = 3.
+      IF sy-subrc <> 0.
+        CLEAR lt_dfies.
+      ENDIF.
+      INSERT VALUE #( name = lv_tname fields = lt_dfies ) INTO TABLE mt_ddic ASSIGNING <ls_ddic>.
+    ENDIF.
+
     LOOP AT lo_desc->components INTO DATA(ls_comp).
       CHECK ls_comp-name <> 'MATERIAL' AND ls_comp-name <> 'MATERIAL_EXTERNAL' AND
             ls_comp-name <> 'MATERIAL_GUID' AND ls_comp-name <> 'MATERIAL_LONG' AND
@@ -1864,8 +1887,17 @@ CLASS lcl_material_bapi IMPLEMENTATION.
       DESCRIBE FIELD <lv_val> TYPE lv_type.
       CHECK lv_type NA 'uvhrl'.                    "elementary fields only
       CHECK <lv_val> IS NOT INITIAL.
+      "column header = field description (data element text), else the field name
+      lv_text = ls_comp-name.
+      ASSIGN <ls_ddic>-fields[ fieldname = ls_comp-name ] TO FIELD-SYMBOL(<ls_dfies>).
+      IF sy-subrc = 0.
+        lv_text = condense( COND string( WHEN <ls_dfies>-fieldtext IS NOT INITIAL THEN <ls_dfies>-fieldtext
+                                         WHEN <ls_dfies>-scrtext_m IS NOT INITIAL THEN <ls_dfies>-scrtext_m
+                                         ELSE ls_comp-name ) ).
+      ENDIF.
       add_value( EXPORTING iv_name  = |{ iv_prefix }{ ls_comp-name }|
                            iv_value = condense( |{ <lv_val> }| )
+                           iv_label = |{ lv_text }{ iv_suffix }|
                  CHANGING  ct_kv    = ct_kv ).
     ENDLOOP.
   ENDMETHOD.
@@ -1877,32 +1909,43 @@ CLASS lcl_material_bapi IMPLEMENTATION.
 
     LOOP AT it_data ASSIGNING <ls_line>.
       lv_n = lv_n + 1.
-      flatten_struct( EXPORTING iv_prefix = |{ iv_prefix }({ lv_n })-| is_data = <ls_line>
+      flatten_struct( EXPORTING iv_prefix = |{ iv_prefix }({ lv_n })-|
+                                iv_suffix = | ({ lv_n })|
+                                is_data   = <ls_line>
                       CHANGING  ct_kv     = ct_kv ).
     ENDLOOP.
   ENDMETHOD.
 
   METHOD add_class_kv.
     "One class: CLASS(n) = class, CLASS(n)-TYPE = class type, CLASS(n)-<characteristic> =
-    "value(s) (several values of a characteristic separated by ;)
-    add_value( EXPORTING iv_name = iv_prefix                  iv_value = CONV #( is_class-classkey-classnum )
-               CHANGING  ct_kv   = ct_kv ).
-    add_value( EXPORTING iv_name = |{ iv_prefix }-TYPE|       iv_value = CONV #( is_class-classkey-classtype )
-               CHANGING  ct_kv   = ct_kv ).
+    "value(s) (several values of a characteristic separated by ;). Headers: description.
+    DATA(lv_suffix) = | { substring_after( val = iv_prefix sub = `CLASS` ) }|.     "' (n)'
+
+    add_value( EXPORTING iv_name  = iv_prefix
+                         iv_value = CONV #( is_class-classkey-classnum )
+                         iv_label = |Class{ lv_suffix }|
+               CHANGING  ct_kv    = ct_kv ).
+    add_value( EXPORTING iv_name  = |{ iv_prefix }-TYPE|
+                         iv_value = CONV #( is_class-classkey-classtype )
+                         iv_label = |Class type{ lv_suffix }|
+               CHANGING  ct_kv    = ct_kv ).
 
     LOOP AT is_class-allocvalueschar INTO DATA(ls_char) WHERE charact IS NOT INITIAL.
       add_value( EXPORTING iv_name  = |{ iv_prefix }-{ ls_char-charact }|
                            iv_value = condense( CONV string( ls_char-value_char ) )
+                           iv_label = |{ char_text( ls_char-charact ) }{ lv_suffix }|
                  CHANGING  ct_kv    = ct_kv ).
     ENDLOOP.
     LOOP AT is_class-allocvaluesnum INTO DATA(ls_num) WHERE charact IS NOT INITIAL.
       add_value( EXPORTING iv_name  = |{ iv_prefix }-{ ls_num-charact }|
                            iv_value = value_text( ls_num )
+                           iv_label = |{ char_text( ls_num-charact ) }{ lv_suffix }|
                  CHANGING  ct_kv    = ct_kv ).
     ENDLOOP.
     LOOP AT is_class-allocvaluescurr INTO DATA(ls_curr) WHERE charact IS NOT INITIAL.
       add_value( EXPORTING iv_name  = |{ iv_prefix }-{ ls_curr-charact }|
                            iv_value = value_text( ls_curr )
+                           iv_label = |{ char_text( ls_curr-charact ) }{ lv_suffix }|
                  CHANGING  ct_kv    = ct_kv ).
     ENDLOOP.
   ENDMETHOD.
@@ -1937,8 +1980,25 @@ CLASS lcl_material_bapi IMPLEMENTATION.
     IF sy-subrc = 0.
       <ls_kv>-value = |{ <ls_kv>-value }; { iv_value }|.
     ELSE.
-      APPEND VALUE #( name = iv_name value = iv_value ) TO ct_kv.
+      APPEND VALUE #( name = iv_name value = iv_value label = iv_label ) TO ct_kv.
     ENDIF.
+  ENDMETHOD.
+
+  METHOD char_text.
+    "Description of a characteristic (CABNT, logon language), the name if none; buffered
+    ASSIGN mt_chartext[ name = iv_atnam ] TO FIELD-SYMBOL(<ls_buf>).
+    IF sy-subrc = 0.
+      rv_text = <ls_buf>-value.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_atnam) = CONV atnam( iv_atnam ).
+    SELECT SINGLE t~atbez FROM cabn AS c INNER JOIN cabnt AS t ON t~atinn = c~atinn
+      WHERE c~atnam = @lv_atnam AND t~spras = @sy-langu
+      INTO @DATA(lv_atbez).
+    rv_text = COND #( WHEN sy-subrc = 0 AND lv_atbez IS NOT INITIAL THEN condense( lv_atbez )
+                      ELSE |{ iv_atnam }| ).
+    INSERT VALUE #( name = iv_atnam value = rv_text ) INTO TABLE mt_chartext.
   ENDMETHOD.
 
   METHOD sync_long_values.
@@ -2413,14 +2473,20 @@ CLASS lcl_template IMPLEMENTATION.
     "a value that BAPI_MATERIAL_GET_ALL returned (+ classification). The columns are
     "the names found in any of the materials, in the order of their first occurrence.
     TYPES: BEGIN OF lty_idx,
-             name TYPE string,
-             col  TYPE i,
+             name  TYPE string,
+             col   TYPE i,
+             label TYPE string,
            END OF lty_idx,
+           BEGIN OF lty_cnt,
+             label TYPE string,
+             n     TYPE i,
+           END OF lty_cnt,
            BEGIN OF lty_cell,
              col   TYPE i,
              value TYPE string,
            END OF lty_cell.
     DATA: lt_idx   TYPE HASHED TABLE OF lty_idx WITH UNIQUE KEY name,
+          lt_cnt   TYPE HASHED TABLE OF lty_cnt WITH UNIQUE KEY label,
           lt_names TYPE string_table,
           lt_rows  TYPE string_table,
           lt_cells TYPE STANDARD TABLE OF lty_cell WITH EMPTY KEY,
@@ -2443,17 +2509,29 @@ CLASS lcl_template IMPLEMENTATION.
     LOOP AT it_posted INTO DATA(ls_post).
       LOOP AT ls_post-data INTO DATA(ls_kv).
         IF NOT line_exists( lt_idx[ name = ls_kv-name ] ).
-          INSERT VALUE #( name = ls_kv-name col = lines( lt_idx ) + 3 ) INTO TABLE lt_idx.
+          INSERT VALUE #( name  = ls_kv-name
+                          col   = lines( lt_idx ) + 3
+                          label = COND #( WHEN ls_kv-label IS NOT INITIAL THEN ls_kv-label ELSE ls_kv-name ) )
+            INTO TABLE lt_idx.
           APPEND ls_kv-name TO lt_names.
         ENDIF.
       ENDLOOP.
     ENDLOOP.
 
-    "Header row
-    lv_cells = cell( iv_col = 1 iv_row = 1 iv_value = `ROW_NO`    iv_style = 0 ) &&
-               cell( iv_col = 2 iv_row = 1 iv_value = `MATERIAL`  iv_style = 0 ).
+    "Header row: field descriptions; a description used by several columns gets the
+    "technical name added in brackets so that the columns stay distinguishable
+    LOOP AT lt_idx INTO DATA(ls_idx).
+      COLLECT VALUE lty_cnt( label = ls_idx-label n = 1 ) INTO lt_cnt.
+    ENDLOOP.
+    lv_cells = cell( iv_col = 1 iv_row = 1 iv_value = `Row Number`      iv_style = 0 ) &&
+               cell( iv_col = 2 iv_row = 1 iv_value = `Material Number` iv_style = 0 ).
     LOOP AT lt_names INTO DATA(lv_name).
-      lv_cells = lv_cells && cell( iv_col = sy-tabix + 2 iv_row = 1 iv_value = lv_name iv_style = 0 ).
+      DATA(lv_col) = sy-tabix + 2.
+      ls_idx = lt_idx[ name = lv_name ].
+      DATA(lv_head) = COND string( WHEN lt_cnt[ label = ls_idx-label ]-n > 1
+                                   THEN |{ ls_idx-label } [{ lv_name }]|
+                                   ELSE ls_idx-label ).
+      lv_cells = lv_cells && cell( iv_col = lv_col iv_row = 1 iv_value = lv_head iv_style = 0 ).
     ENDLOOP.
     APPEND |<row r="1">{ lv_cells }</row>| TO lt_rows.
 
