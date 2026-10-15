@@ -3039,7 +3039,32 @@ CLASS lcl_app IMPLEMENTATION.
     IF mt_row IS INITIAL.
       RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = 'Template contains no data rows'.
     ENDIF.
+    check_record_limit( ).
     mo_log->add( iv_type = 'S' iv_text = |Template { lv_file }: { lines( mt_row ) } data row(s) read| ).
+  ENDMETHOD.
+
+  METHOD check_record_limit.
+    "Hard error if the file has more data rows than allowed for the run mode
+    "(foreground / background) and the operation, see GC_MAX_ROWS.
+    DATA(lv_op)    = lcl_screen=>get_operation( ).
+    DATA(lv_count) = lines( mt_row ).
+
+    DATA(lv_max) = COND i(
+      WHEN sy-batch = abap_true
+        THEN SWITCH i( lv_op WHEN gc_op-create THEN gc_max_rows-bg-create
+                             WHEN gc_op-update THEN gc_max_rows-bg-update
+                             WHEN gc_op-extend THEN gc_max_rows-bg-extend )
+        ELSE SWITCH i( lv_op WHEN gc_op-create THEN gc_max_rows-fg-create
+                             WHEN gc_op-update THEN gc_max_rows-fg-update
+                             WHEN gc_op-extend THEN gc_max_rows-fg-extend ) ).
+    CHECK lv_max > 0 AND lv_count > lv_max.
+
+    RAISE EXCEPTION TYPE lcx_error
+      EXPORTING
+        iv_text = |File has { lv_count } records - maximum is { lv_max } for { SWITCH string( lv_op
+                    WHEN gc_op-create THEN `Create` WHEN gc_op-update THEN `Update` ELSE `Extend` ) } | &&
+                  |in { COND string( WHEN sy-batch = abap_true THEN `background` ELSE `foreground` ) } - | &&
+                  |split the file, nothing was processed|.
   ENDMETHOD.
 
   METHOD check_defaults.

@@ -347,6 +347,7 @@ CLASS lcl_app DEFINITION FINAL.
 
     METHODS:
       load_template          RAISING lcx_error,
+      check_record_limit     RAISING lcx_error,
       check_defaults,
       apply_defaults         IMPORTING is_row  TYPE ty_row
                              CHANGING  cs_bapi TYPE ty_bapi,
