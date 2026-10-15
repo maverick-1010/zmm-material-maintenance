@@ -4996,42 +4996,6 @@ CLASS lcl_app IMPLEMENTATION.
                        iv_text  = |Material data for the output file could not be read: { lx_error->get_text( ) }| ).
       ENDTRY.
     ENDLOOP.
-
-    "Column headers: the description of the configured template field that maps to the
-    "BAPI field (same wording as in the template / log); otherwise the DDIC description
-    "set when the data was read. PARAM(n)-FIELD (table lines) -> description (n).
-    DATA: lt_desc TYPE tt_kv_hash,
-          lt_memo TYPE tt_kv_hash.
-    LOOP AT mo_config->mt_fcat INTO DATA(ls_fc) WHERE description IS NOT INITIAL.
-      LOOP AT ls_fc-targets INTO DATA(ls_tg).
-        DATA(lv_key) = |{ ls_tg-param }-{ ls_tg-comp }|.
-        IF NOT line_exists( lt_desc[ name = lv_key ] ).
-          INSERT VALUE #( name = lv_key value = condense( CONV string( ls_fc-description ) ) ) INTO TABLE lt_desc.
-        ENDIF.
-      ENDLOOP.
-    ENDLOOP.
-
-    LOOP AT mt_sheet ASSIGNING FIELD-SYMBOL(<ls_sheet>).
-      LOOP AT <ls_sheet>-data ASSIGNING FIELD-SYMBOL(<ls_kv>).
-        ASSIGN lt_memo[ name = <ls_kv>-name ] TO FIELD-SYMBOL(<ls_memo>).
-        IF sy-subrc <> 0.
-          DATA(lv_label) = VALUE string( ).
-          FIND REGEX `^([A-Z0-9_]+)(\(([0-9]+)\))?-(.+)$` IN <ls_kv>-name
-               SUBMATCHES DATA(lv_param) DATA(lv_paren) DATA(lv_n) DATA(lv_comp).
-          IF sy-subrc = 0 AND lv_param <> 'CLASS'.
-            ASSIGN lt_desc[ name = |{ lv_param }-{ lv_comp }| ] TO FIELD-SYMBOL(<ls_d>).
-            IF sy-subrc = 0.
-              lv_label = COND #( WHEN lv_n IS NOT INITIAL THEN |{ <ls_d>-value } ({ lv_n })|
-                                 ELSE <ls_d>-value ).
-            ENDIF.
-          ENDIF.
-          INSERT VALUE #( name = <ls_kv>-name value = lv_label ) INTO TABLE lt_memo ASSIGNING <ls_memo>.
-        ENDIF.
-        IF <ls_memo>-value IS NOT INITIAL.
-          <ls_kv>-label = <ls_memo>-value.
-        ENDIF.
-      ENDLOOP.
-    ENDLOOP.
   ENDMETHOD.
 
   METHOD build_call.
