@@ -201,21 +201,27 @@ CLASS lcl_material_bapi DEFINITION FINAL.
                      RETURNING VALUE(rt_raw) TYPE tt_rawpart
                      RAISING   lcx_error,
       flatten_struct IMPORTING iv_prefix TYPE string
+                               iv_suffix TYPE string OPTIONAL
                                is_data   TYPE any
                      CHANGING  ct_kv     TYPE tt_kv,
       flatten_table  IMPORTING iv_prefix TYPE string
                                it_data   TYPE ANY TABLE
                      CHANGING  ct_kv     TYPE tt_kv,
+      char_text      IMPORTING iv_atnam  TYPE csequence
+                     RETURNING VALUE(rv_text) TYPE string,
       add_class_kv   IMPORTING iv_prefix TYPE string
                                is_class  TYPE ty_classdata
                      CHANGING  ct_kv     TYPE tt_kv,
       add_value      IMPORTING iv_name   TYPE string
                                iv_value  TYPE string
+                               iv_label  TYPE string OPTIONAL
                      CHANGING  ct_kv     TYPE tt_kv,
       value_text     IMPORTING is_value  TYPE any
                      RETURNING VALUE(rv_text) TYPE string.
     METHODS sync_long_values CHANGING ct_char TYPE STANDARD TABLE.
     DATA: mo_log   TYPE REF TO lcl_log,
+          mt_ddic  TYPE tt_ddicbuf,               "DDIC field texts (output file headers)
+          mt_chartext TYPE tt_kv_hash,            "characteristic descriptions
           mt_cache TYPE tt_refcache,
           mt_clcache TYPE tt_refcache.            "classification of reference materials
     METHODS finish_luw IMPORTING iv_ok        TYPE abap_bool
