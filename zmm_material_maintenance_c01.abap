@@ -168,6 +168,9 @@ CLASS lcl_material_bapi DEFINITION FINAL.
                                     iv_bwkey      TYPE bwkey OPTIONAL
                           RETURNING VALUE(rs_ref) TYPE ty_bapi
                           RAISING   lcx_error,
+      read_material_data  IMPORTING is_key        TYPE ty_postkey
+                          RETURNING VALUE(rt_data) TYPE tt_kv
+                          RAISING   lcx_error,
       save_sales_text     IMPORTING is_row       TYPE ty_row
                                     iv_matnr     TYPE matnr
                                     iv_text      TYPE string
@@ -184,9 +187,33 @@ CLASS lcl_material_bapi DEFINITION FINAL.
       get_ref_classification IMPORTING iv_matnr       TYPE matnr
                                        iv_class       TYPE csequence
                                        iv_ctype       TYPE csequence
+                                       iv_fresh       TYPE abap_bool DEFAULT abap_false
                              RETURNING VALUE(rs_class) TYPE ty_bapi
                              RAISING   lcx_error.
   PRIVATE SECTION.
+    METHODS:
+      get_all_raw    IMPORTING iv_matnr      TYPE matnr
+                               iv_werks      TYPE werks_d
+                               iv_vkorg      TYPE vkorg
+                               iv_vtweg      TYPE vtweg
+                               iv_bwkey      TYPE bwkey OPTIONAL
+                               iv_all        TYPE abap_bool DEFAULT abap_false
+                     RETURNING VALUE(rt_raw) TYPE tt_rawpart
+                     RAISING   lcx_error,
+      flatten_struct IMPORTING iv_prefix TYPE string
+                               is_data   TYPE any
+                     CHANGING  ct_kv     TYPE tt_kv,
+      flatten_table  IMPORTING iv_prefix TYPE string
+                               it_data   TYPE ANY TABLE
+                     CHANGING  ct_kv     TYPE tt_kv,
+      add_class_kv   IMPORTING iv_prefix TYPE string
+                               is_class  TYPE ty_classdata
+                     CHANGING  ct_kv     TYPE tt_kv,
+      add_value      IMPORTING iv_name   TYPE string
+                               iv_value  TYPE string
+                     CHANGING  ct_kv     TYPE tt_kv,
+      value_text     IMPORTING is_value  TYPE any
+                     RETURNING VALUE(rv_text) TYPE string.
     METHODS sync_long_values CHANGING ct_char TYPE STANDARD TABLE.
     DATA: mo_log   TYPE REF TO lcl_log,
           mt_cache TYPE tt_refcache,
@@ -204,9 +231,10 @@ ENDCLASS.
 CLASS lcl_output DEFINITION FINAL.
   PUBLIC SECTION.
     METHODS constructor IMPORTING io_log TYPE REF TO lcl_log.
-    METHODS publish.
+    METHODS publish IMPORTING it_posted TYPE tt_posted OPTIONAL.
   PRIVATE SECTION.
-    DATA: mo_log TYPE REF TO lcl_log,
+    DATA: mo_log    TYPE REF TO lcl_log,
+          mt_posted TYPE tt_posted,           "sheet 2 of the output file
           mt_out TYPE tt_msg_out,
           mo_alv TYPE REF TO cl_salv_table.
     METHODS:
@@ -224,7 +252,11 @@ CLASS lcl_template DEFINITION FINAL.
     CLASS-METHODS:
       download,
       template_columns RETURNING VALUE(rt_cols) TYPE tt_fieldname,
-      get_temp_matnr IMPORTING is_row TYPE ty_row RETURNING VALUE(rv_matnr) TYPE matnr.
+      get_temp_matnr IMPORTING is_row TYPE ty_row RETURNING VALUE(rv_matnr) TYPE matnr,
+      add_data_sheet IMPORTING iv_xlsx        TYPE xstring
+                               it_posted      TYPE tt_posted
+                               iv_test        TYPE abap_bool
+                     RETURNING VALUE(rv_xlsx) TYPE xstring.
   PRIVATE SECTION.
     CONSTANTS:
       BEGIN OF c_style,                 "cellXfs index in styles.xml
@@ -248,6 +280,9 @@ CLASS lcl_template DEFINITION FINAL.
                                iv_variant     TYPE csequence
                      RETURNING VALUE(rv_xlsx) TYPE xstring,
       sheet_template IMPORTING it_cols       TYPE tt_col
+                     RETURNING VALUE(rv_xml) TYPE string,
+      sheet_data     IMPORTING it_posted     TYPE tt_posted
+                               iv_test       TYPE abap_bool
                      RETURNING VALUE(rv_xml) TYPE string,
       sheet_info     IMPORTING it_fcat       TYPE tt_fcat
                                iv_variant    TYPE csequence
@@ -301,6 +336,8 @@ CLASS lcl_app DEFINITION FINAL.
           mt_row    TYPE tt_row,              "template rows
           mt_copied TYPE tt_rowfield,         "values copied from reference
           mt_bapi   TYPE tt_bapi,             "mapped BAPI data per row
+          mt_posted TYPE tt_postkey,          "rows of successfully posted materials
+          mt_sheet  TYPE tt_posted,           "their data for the output file
           mt_ex_mara TYPE tt_ex_mara,         "existence buffers (PREFETCH_EXISTENCE)
           mt_ex_marc TYPE tt_ex_marc,
           mt_ex_mvke TYPE tt_ex_mvke,
@@ -360,6 +397,7 @@ CLASS lcl_app DEFINITION FINAL.
       check_existence        IMPORTING is_row  TYPE ty_row
                                        is_bapi TYPE ty_bapi,
       process_materials,
+      read_posted_data,
       build_call             IMPORTING iv_matkey      TYPE string
                                        iv_matnr       TYPE matnr
                                        iv_row         TYPE i OPTIONAL

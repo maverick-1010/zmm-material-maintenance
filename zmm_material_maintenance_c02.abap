@@ -1240,20 +1240,17 @@ CLASS lcl_material_bapi IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD get_reference.
-    "Read reference material via BAPI_MATERIAL_GET_ALL - called dynamically
-    "so that the report also activates on releases without this BAPI
+  METHOD get_all_raw.
+    "BAPI_MATERIAL_GET_ALL - called dynamically so that the report also activates
+    "on releases without this BAPI. Returns the structures (client, plant, forecast,
+    "planning, valuation, sales data) and tables of the interface as read.
+    "IV_ALL: also the EANs (output file); otherwise only what the reference copy needs.
     TYPES: BEGIN OF lty_reftab,
              param TYPE fieldname,
              data  TYPE REF TO data,
            END OF lty_reftab.
     CONSTANTS lc_ref_tables TYPE string VALUE
       ` MATERIALDESCRIPTION UNITSOFMEASURE MATERIALLONGTEXT TAXCLASSIFICATIONS `.
-    FIELD-SYMBOLS: <ls_ga>  TYPE any,
-                   <lt_src> TYPE STANDARD TABLE,
-                   <lt_tgt> TYPE STANDARD TABLE,
-                   <ls_src> TYPE any,
-                   <ls_tgt> TYPE any.
     DATA: lt_ptab   TYPE abap_func_parmbind_tab,
           lt_return TYPE STANDARD TABLE OF bapiret2,
           lt_reftab TYPE STANDARD TABLE OF lty_reftab WITH EMPTY KEY,
@@ -1268,12 +1265,9 @@ CLASS lcl_material_bapi IMPLEMENTATION.
           lv_mat40  TYPE c LENGTH 40,
           lv_bwkey  TYPE bwkey.
 
-    DATA(lv_key) = |{ iv_matnr }/{ iv_werks }/{ iv_vkorg }/{ iv_vtweg }/{ iv_bwkey }|.
-    READ TABLE mt_cache INTO DATA(ls_cache) WITH KEY key = lv_key.
-    IF sy-subrc = 0.
-      rs_ref = ls_cache-data.
-      RETURN.
-    ENDIF.
+    DATA(lv_tables) = COND string( WHEN iv_all = abap_true
+                                   THEN lc_ref_tables && `INTERNATIONALARTNOS `
+                                   ELSE lc_ref_tables ).
 
     TRY.
         CREATE DATA lr_mara TYPE ('BAPI_MARA_GA').
@@ -1330,7 +1324,7 @@ CLASS lcl_material_bapi IMPLEMENTATION.
         AND r3state   = 'A'
         AND paramtype = 'T'.
     LOOP AT lt_fupar INTO DATA(ls_fupar).
-      CHECK lc_ref_tables CS | { ls_fupar-parameter } |.
+      CHECK lv_tables CS | { ls_fupar-parameter } |.
       TRY.
           CREATE DATA lr_tab TYPE STANDARD TABLE OF (ls_fupar-structure).
         CATCH cx_sy_create_data_error.
@@ -1354,14 +1348,53 @@ CLASS lcl_material_bapi IMPLEMENTATION.
           iv_text = |Reference material { iv_matnr ALPHA = OUT }: { ls_ret-message }|.
     ENDLOOP.
 
-    ASSIGN lr_mara->* TO <ls_ga>. MOVE-CORRESPONDING <ls_ga> TO rs_ref-clientdata.
-    ASSIGN lr_marc->* TO <ls_ga>. MOVE-CORRESPONDING <ls_ga> TO rs_ref-plantdata.
-    ASSIGN lr_mpop->* TO <ls_ga>. MOVE-CORRESPONDING <ls_ga> TO rs_ref-forecastparameters.
-    ASSIGN lr_mpgd->* TO <ls_ga>. MOVE-CORRESPONDING <ls_ga> TO rs_ref-planningdata.
-    ASSIGN lr_mbew->* TO <ls_ga>. MOVE-CORRESPONDING <ls_ga> TO rs_ref-valuationdata.
-    ASSIGN lr_mvke->* TO <ls_ga>. MOVE-CORRESPONDING <ls_ga> TO rs_ref-salesdata.
 
+    rt_raw = VALUE #( ( param = 'CLIENTDATA'         data = lr_mara )
+                      ( param = 'PLANTDATA'          data = lr_marc )
+                      ( param = 'FORECASTPARAMETERS' data = lr_mpop )
+                      ( param = 'PLANNINGDATA'       data = lr_mpgd )
+                      ( param = 'VALUATIONDATA'      data = lr_mbew )
+                      ( param = 'SALESDATA'          data = lr_mvke ) ).
     LOOP AT lt_reftab INTO DATA(ls_reftab).
+      APPEND VALUE #( param = ls_reftab-param table = abap_true data = ls_reftab-data ) TO rt_raw.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD get_reference.
+    "Reference material via BAPI_MATERIAL_GET_ALL (see GET_ALL_RAW), converted to
+    "the BAPI structures of the material save; cached per material / org. levels.
+    FIELD-SYMBOLS: <ls_ga>  TYPE any,
+                   <lt_src> TYPE STANDARD TABLE,
+                   <lt_tgt> TYPE STANDARD TABLE,
+                   <ls_src> TYPE any,
+                   <ls_tgt> TYPE any.
+
+    DATA(lv_key) = |{ iv_matnr }/{ iv_werks }/{ iv_vkorg }/{ iv_vtweg }/{ iv_bwkey }|.
+    READ TABLE mt_cache INTO DATA(ls_cache) WITH KEY key = lv_key.
+    IF sy-subrc = 0.
+      rs_ref = ls_cache-data.
+      RETURN.
+    ENDIF.
+
+    DATA(lt_raw) = get_all_raw( iv_matnr = iv_matnr
+                                iv_werks = iv_werks
+                                iv_vkorg = iv_vkorg
+                                iv_vtweg = iv_vtweg
+                                iv_bwkey = iv_bwkey ).
+
+    LOOP AT lt_raw INTO DATA(ls_raw) WHERE table = abap_false.
+      ASSIGN ls_raw-data->* TO <ls_ga>.
+      CASE ls_raw-param.
+        WHEN 'CLIENTDATA'.         MOVE-CORRESPONDING <ls_ga> TO rs_ref-clientdata.
+        WHEN 'PLANTDATA'.          MOVE-CORRESPONDING <ls_ga> TO rs_ref-plantdata.
+        WHEN 'FORECASTPARAMETERS'. MOVE-CORRESPONDING <ls_ga> TO rs_ref-forecastparameters.
+        WHEN 'PLANNINGDATA'.       MOVE-CORRESPONDING <ls_ga> TO rs_ref-planningdata.
+        WHEN 'VALUATIONDATA'.      MOVE-CORRESPONDING <ls_ga> TO rs_ref-valuationdata.
+        WHEN 'SALESDATA'.          MOVE-CORRESPONDING <ls_ga> TO rs_ref-salesdata.
+      ENDCASE.
+    ENDLOOP.
+
+    LOOP AT lt_raw INTO DATA(ls_reftab) WHERE table = abap_true.
       ASSIGN ls_reftab-data->* TO <lt_src>.
       ASSIGN COMPONENT ls_reftab-param OF STRUCTURE rs_ref TO <lt_tgt>.
       CHECK sy-subrc = 0.
@@ -1696,10 +1729,12 @@ CLASS lcl_material_bapi IMPLEMENTATION.
 
     lv_ctype = COND #( WHEN iv_ctype IS INITIAL THEN gc_def_classtype ELSE iv_ctype ).
     DATA(lv_key) = |{ iv_matnr }/{ lv_ctype }/{ iv_class }|.
-    READ TABLE mt_clcache INTO DATA(ls_cache) WITH KEY key = lv_key.
-    IF sy-subrc = 0.
-      rs_class = ls_cache-data.
-      RETURN.
+    IF iv_fresh = abap_false.                     "IV_FRESH: read the current data (output file)
+      READ TABLE mt_clcache INTO DATA(ls_cache) WITH KEY key = lv_key.
+      IF sy-subrc = 0.
+        rs_class = ls_cache-data.
+        RETURN.
+      ENDIF.
     ENDIF.
 
     lv_objkey = iv_matnr.
@@ -1760,7 +1795,150 @@ CLASS lcl_material_bapi IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    APPEND VALUE #( key = lv_key data = rs_class ) TO mt_clcache.
+    IF iv_fresh = abap_false.
+      APPEND VALUE #( key = lv_key data = rs_class ) TO mt_clcache.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD read_material_data.
+    "Current data of a posted material for the output file (sheet 2): everything
+    "BAPI_MATERIAL_GET_ALL returns for the org. levels of the template row (fields
+    "that have a value), plus the classification. Column names: PARAM-FIELD,
+    "PARAM(n)-FIELD for table lines, CLASS(n)-... for classes.
+    FIELD-SYMBOLS <ls_part> TYPE any.
+    FIELD-SYMBOLS <lt_part> TYPE ANY TABLE.
+
+    DATA(lt_raw) = get_all_raw( iv_matnr = is_key-matnr
+                                iv_werks = is_key-werks
+                                iv_vkorg = is_key-vkorg
+                                iv_vtweg = is_key-vtweg
+                                iv_bwkey = CONV bwkey( is_key-werks )
+                                iv_all   = abap_true ).
+    LOOP AT lt_raw INTO DATA(ls_raw).
+      IF ls_raw-table = abap_true.
+        ASSIGN ls_raw-data->* TO <lt_part>.
+        flatten_table( EXPORTING iv_prefix = CONV #( ls_raw-param ) it_data = <lt_part>
+                       CHANGING  ct_kv     = rt_data ).
+      ELSE.
+        ASSIGN ls_raw-data->* TO <ls_part>.
+        flatten_struct( EXPORTING iv_prefix = |{ ls_raw-param }-| is_data = <ls_part>
+                        CHANGING  ct_kv     = rt_data ).
+      ENDIF.
+    ENDLOOP.
+
+    "Classification (class type 001, all classes of the material)
+    TRY.
+        DATA(ls_class) = get_ref_classification( iv_matnr = is_key-matnr
+                                                 iv_class = ``
+                                                 iv_ctype = ``
+                                                 iv_fresh = abap_true ).
+      CATCH lcx_error.
+        RETURN.
+    ENDTRY.
+    CHECK ls_class-classkey-classnum IS NOT INITIAL.
+
+    DATA(lt_classes) = VALUE tt_classdata( ( classkey        = ls_class-classkey
+                                             allocvalueschar = ls_class-allocvalueschar
+                                             allocvaluesnum  = ls_class-allocvaluesnum
+                                             allocvaluescurr = ls_class-allocvaluescurr ) ).
+    APPEND LINES OF ls_class-extra_class TO lt_classes.
+    LOOP AT lt_classes INTO DATA(ls_cl).
+      add_class_kv( EXPORTING iv_prefix = |CLASS({ sy-tabix })|
+                              is_class  = ls_cl
+                    CHANGING  ct_kv     = rt_data ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD flatten_struct.
+    "Components of a structure that are elementary and not initial, as
+    "<prefix><component> = value. Key fields that repeat the material number are left out.
+    DATA lv_type TYPE c LENGTH 1.
+
+    DATA(lo_desc) = CAST cl_abap_structdescr( cl_abap_typedescr=>describe_by_data( is_data ) ).
+    LOOP AT lo_desc->components INTO DATA(ls_comp).
+      CHECK ls_comp-name <> 'MATERIAL' AND ls_comp-name <> 'MATERIAL_EXTERNAL' AND
+            ls_comp-name <> 'MATERIAL_GUID' AND ls_comp-name <> 'MATERIAL_LONG' AND
+            ls_comp-name <> 'MATERIAL_VERSION'.
+      ASSIGN COMPONENT ls_comp-name OF STRUCTURE is_data TO FIELD-SYMBOL(<lv_val>).
+      CHECK sy-subrc = 0.
+      DESCRIBE FIELD <lv_val> TYPE lv_type.
+      CHECK lv_type NA 'uvhrl'.                    "elementary fields only
+      CHECK <lv_val> IS NOT INITIAL.
+      add_value( EXPORTING iv_name  = |{ iv_prefix }{ ls_comp-name }|
+                           iv_value = condense( |{ <lv_val> }| )
+                 CHANGING  ct_kv    = ct_kv ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD flatten_table.
+    "Lines of a table parameter: <param>(n)-<component>
+    FIELD-SYMBOLS <ls_line> TYPE any.
+    DATA lv_n TYPE i.
+
+    LOOP AT it_data ASSIGNING <ls_line>.
+      lv_n = lv_n + 1.
+      flatten_struct( EXPORTING iv_prefix = |{ iv_prefix }({ lv_n })-| is_data = <ls_line>
+                      CHANGING  ct_kv     = ct_kv ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD add_class_kv.
+    "One class: CLASS(n) = class, CLASS(n)-TYPE = class type, CLASS(n)-<characteristic> =
+    "value(s) (several values of a characteristic separated by ;)
+    add_value( EXPORTING iv_name = iv_prefix                  iv_value = CONV #( is_class-classkey-classnum )
+               CHANGING  ct_kv   = ct_kv ).
+    add_value( EXPORTING iv_name = |{ iv_prefix }-TYPE|       iv_value = CONV #( is_class-classkey-classtype )
+               CHANGING  ct_kv   = ct_kv ).
+
+    LOOP AT is_class-allocvalueschar INTO DATA(ls_char) WHERE charact IS NOT INITIAL.
+      add_value( EXPORTING iv_name  = |{ iv_prefix }-{ ls_char-charact }|
+                           iv_value = condense( CONV string( ls_char-value_char ) )
+                 CHANGING  ct_kv    = ct_kv ).
+    ENDLOOP.
+    LOOP AT is_class-allocvaluesnum INTO DATA(ls_num) WHERE charact IS NOT INITIAL.
+      add_value( EXPORTING iv_name  = |{ iv_prefix }-{ ls_num-charact }|
+                           iv_value = value_text( ls_num )
+                 CHANGING  ct_kv    = ct_kv ).
+    ENDLOOP.
+    LOOP AT is_class-allocvaluescurr INTO DATA(ls_curr) WHERE charact IS NOT INITIAL.
+      add_value( EXPORTING iv_name  = |{ iv_prefix }-{ ls_curr-charact }|
+                           iv_value = value_text( ls_curr )
+                 CHANGING  ct_kv    = ct_kv ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD value_text.
+    "Numeric / currency characteristic value as text: from [- to] [unit / currency]
+    FIELD-SYMBOLS <lv_f> TYPE any.
+
+    ASSIGN COMPONENT 'VALUE_FROM' OF STRUCTURE is_value TO <lv_f>.
+    IF sy-subrc = 0 AND <lv_f> IS NOT INITIAL.
+      rv_text = condense( |{ CONV decfloat34( <lv_f> ) }| ).
+    ENDIF.
+    ASSIGN COMPONENT 'VALUE_TO' OF STRUCTURE is_value TO <lv_f>.
+    IF sy-subrc = 0 AND <lv_f> IS NOT INITIAL.
+      rv_text = |{ rv_text } - { condense( |{ CONV decfloat34( <lv_f> ) }| ) }|.
+    ENDIF.
+    IF rv_text IS INITIAL.
+      rv_text = `0`.
+    ENDIF.
+    ASSIGN COMPONENT 'UNIT_FROM' OF STRUCTURE is_value TO <lv_f>.
+    IF sy-subrc <> 0 OR <lv_f> IS INITIAL.
+      ASSIGN COMPONENT 'CURRENCY_FROM' OF STRUCTURE is_value TO <lv_f>.
+    ENDIF.
+    IF sy-subrc = 0 AND <lv_f> IS NOT INITIAL.
+      rv_text = |{ rv_text } { <lv_f> }|.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD add_value.
+    "Add a value; a second value for the same name is appended with ;
+    ASSIGN ct_kv[ name = iv_name ] TO FIELD-SYMBOL(<ls_kv>).
+    IF sy-subrc = 0.
+      <ls_kv>-value = |{ <ls_kv>-value }; { iv_value }|.
+    ELSE.
+      APPEND VALUE #( name = iv_name value = iv_value ) TO ct_kv.
+    ENDIF.
   ENDMETHOD.
 
   METHOD sync_long_values.
@@ -1839,6 +2017,7 @@ CLASS lcl_output IMPLEMENTATION.
     "Create the ALV of the log, then (not in a test run) write the output file to
     "the application server and send it by e-mail. Warnings are added to the log
     "if path or recipients are missing.
+    mt_posted = it_posted.
     mt_out = mo_log->mt_msg.
     CHECK build_alv( ) = abap_true.
 
@@ -1902,11 +2081,21 @@ CLASS lcl_output IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD to_xlsx.
-    "Convert the ALV to xlsx (initial if the conversion fails).
+    "Output file as xlsx: sheet 1 = the ALV export as it is, sheet 2 = MATERIAL_DATA
+    "(successfully posted materials). Initial if the ALV export fails; without
+    "sheet 2 if that can not be added.
     TRY.
         rv_xdata = mo_alv->to_xml( xml_type = if_salv_bs_xml=>c_type_xlsx ).
       CATCH cx_root.
         CLEAR rv_xdata.
+        RETURN.
+    ENDTRY.
+    TRY.
+        rv_xdata = lcl_template=>add_data_sheet( iv_xlsx    = rv_xdata
+                                                 it_posted  = mt_posted
+                                                 iv_test    = p_test ).
+      CATCH cx_root.
+        "keep the ALV export
     ENDTRY.
   ENDMETHOD.
 
@@ -2165,6 +2354,135 @@ CLASS lcl_template IMPLEMENTATION.
     lo_zip->add( name = 'xl/worksheets/sheet2.xml' content = utf8( sheet_info( it_fcat    = it_fcat
                                                                                iv_variant = iv_variant ) ) ).
     rv_xlsx = lo_zip->save( ).
+  ENDMETHOD.
+
+  METHOD add_data_sheet.
+    "Add the sheet MATERIAL_DATA to the xlsx export of the ALV (sheet 1 stays the
+    "ALV output as it is). The ALV workbook is opened as zip: sheet file, entry in
+    "workbook.xml, relationship and content type are added. If the workbook has an
+    "unexpected structure it is returned unchanged.
+    CONSTANTS: lc_part TYPE string VALUE 'xl/worksheets/sheet_matdata.xml',
+               lc_rns  TYPE string VALUE `http://schemas.openxmlformats.org/officeDocument/2006/relationships`.
+    DATA: lx_wb   TYPE xstring,
+          lx_rel  TYPE xstring,
+          lx_type TYPE xstring.
+
+    rv_xlsx = iv_xlsx.
+    DATA(lo_zip) = NEW cl_abap_zip( ).
+    lo_zip->load( EXPORTING zip = iv_xlsx EXCEPTIONS zip_parse_error = 1 OTHERS = 2 ).
+    CHECK sy-subrc = 0.
+    lo_zip->get( EXPORTING name = 'xl/workbook.xml' IMPORTING content = lx_wb EXCEPTIONS OTHERS = 1 ).
+    CHECK sy-subrc = 0.
+    lo_zip->get( EXPORTING name = 'xl/_rels/workbook.xml.rels' IMPORTING content = lx_rel EXCEPTIONS OTHERS = 1 ).
+    CHECK sy-subrc = 0.
+    lo_zip->get( EXPORTING name = '[Content_Types].xml' IMPORTING content = lx_type EXCEPTIONS OTHERS = 1 ).
+    CHECK sy-subrc = 0.
+
+    DATA(lv_wb)   = cl_abap_codepage=>convert_from( lx_wb ).
+    DATA(lv_rel)  = cl_abap_codepage=>convert_from( lx_rel ).
+    DATA(lv_type) = cl_abap_codepage=>convert_from( lx_type ).
+    CHECK lv_wb CS '</sheets>' AND lv_rel CS '</Relationships>' AND lv_type CS '</Types>'.
+
+    "namespace prefix r: for the relationship id of the new sheet
+    IF lv_wb NS 'xmlns:r='.
+      lv_wb = replace( val = lv_wb sub = `<workbook` with = |<workbook xmlns:r="{ lc_rns }"| occ = 1 ).
+      CHECK lv_wb CS 'xmlns:r='.
+    ENDIF.
+    lv_wb   = replace( val = lv_wb sub = `</sheets>`
+                       with = `<sheet name="MATERIAL_DATA" sheetId="999" r:id="rIdMatData"/></sheets>` occ = 1 ).
+    lv_rel  = replace( val = lv_rel sub = `</Relationships>`
+                       with = |<Relationship Id="rIdMatData" Type="{ lc_rns }/worksheet" | &&
+                              |Target="worksheets/sheet_matdata.xml"/></Relationships>| occ = 1 ).
+    lv_type = replace( val = lv_type sub = `</Types>`
+                       with = |<Override PartName="/{ lc_part }" | &&
+                              |ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>|
+                       occ = 1 ).
+
+    lo_zip->delete( EXPORTING name = 'xl/workbook.xml' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->delete( EXPORTING name = 'xl/_rels/workbook.xml.rels' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->delete( EXPORTING name = '[Content_Types].xml' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->add( name = 'xl/workbook.xml'            content = utf8( lv_wb ) ).
+    lo_zip->add( name = 'xl/_rels/workbook.xml.rels' content = utf8( lv_rel ) ).
+    lo_zip->add( name = '[Content_Types].xml'        content = utf8( lv_type ) ).
+    lo_zip->add( name = lc_part content = utf8( sheet_data( it_posted = it_posted iv_test = iv_test ) ) ).
+    rv_xlsx = lo_zip->save( ).
+  ENDMETHOD.
+
+  METHOD sheet_data.
+    "Sheet MATERIAL_DATA = successfully posted materials: ROW_NO, MATERIAL and every field with
+    "a value that BAPI_MATERIAL_GET_ALL returned (+ classification). The columns are
+    "the names found in any of the materials, in the order of their first occurrence.
+    TYPES: BEGIN OF lty_idx,
+             name TYPE string,
+             col  TYPE i,
+           END OF lty_idx,
+           BEGIN OF lty_cell,
+             col   TYPE i,
+             value TYPE string,
+           END OF lty_cell.
+    DATA: lt_idx   TYPE HASHED TABLE OF lty_idx WITH UNIQUE KEY name,
+          lt_names TYPE string_table,
+          lt_rows  TYPE string_table,
+          lt_cells TYPE STANDARD TABLE OF lty_cell WITH EMPTY KEY,
+          lv_cells TYPE string,
+          lv_row   TYPE i.
+
+    IF it_posted IS INITIAL.
+      DATA(lv_msg) = COND string( WHEN iv_test = abap_true
+                                  THEN `Test run - no material was posted`
+                                  ELSE `No material was posted successfully` ).
+      rv_xml =
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
+        `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` &&
+        |<sheetData><row r="1">{ cell( iv_col = 1 iv_row = 1 iv_value = lv_msg iv_style = 0 ) }</row></sheetData>| &&
+        `</worksheet>`.
+      RETURN.
+    ENDIF.
+
+    "Column list
+    LOOP AT it_posted INTO DATA(ls_post).
+      LOOP AT ls_post-data INTO DATA(ls_kv).
+        IF NOT line_exists( lt_idx[ name = ls_kv-name ] ).
+          INSERT VALUE #( name = ls_kv-name col = lines( lt_idx ) + 3 ) INTO TABLE lt_idx.
+          APPEND ls_kv-name TO lt_names.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    "Header row
+    lv_cells = cell( iv_col = 1 iv_row = 1 iv_value = `ROW_NO`    iv_style = 0 ) &&
+               cell( iv_col = 2 iv_row = 1 iv_value = `MATERIAL`  iv_style = 0 ).
+    LOOP AT lt_names INTO DATA(lv_name).
+      lv_cells = lv_cells && cell( iv_col = sy-tabix + 2 iv_row = 1 iv_value = lv_name iv_style = 0 ).
+    ENDLOOP.
+    APPEND |<row r="1">{ lv_cells }</row>| TO lt_rows.
+
+    "One row per posted template row (cells in column order)
+    LOOP AT it_posted INTO ls_post.
+      lv_row = sy-tabix + 1.
+      CLEAR lt_cells.
+      APPEND VALUE #( col = 1 value = CONV string( ls_post-row ) ) TO lt_cells.
+      APPEND VALUE #( col = 2 value = |{ ls_post-matnr ALPHA = OUT }| ) TO lt_cells.
+      LOOP AT ls_post-data INTO ls_kv.
+        APPEND VALUE #( col = lt_idx[ name = ls_kv-name ]-col value = ls_kv-value ) TO lt_cells.
+      ENDLOOP.
+      SORT lt_cells BY col.
+      CLEAR lv_cells.
+      LOOP AT lt_cells INTO DATA(ls_cell).
+        lv_cells = lv_cells && cell( iv_col = ls_cell-col iv_row = lv_row iv_value = ls_cell-value iv_style = 0 ).
+      ENDLOOP.
+      APPEND |<row r="{ lv_row }">{ lv_cells }</row>| TO lt_rows.
+    ENDLOOP.
+
+    rv_xml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
+      `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` &&
+      `<sheetViews><sheetView workbookViewId="0">` &&
+      `<pane xSplit="2" ySplit="1" topLeftCell="C2" activePane="bottomRight" state="frozen"/>` &&
+      `</sheetView></sheetViews>` &&
+      |<cols><col min="1" max="{ lines( lt_names ) + 2 }" width="18" customWidth="1"/></cols>| &&
+      |<sheetData>{ concat_lines_of( lt_rows ) }</sheetData>| &&
+      `</worksheet>`.
   ENDMETHOD.
 
   METHOD sheet_template.
@@ -2665,9 +2983,10 @@ CLASS lcl_app IMPLEMENTATION.
                              |not executed - correct the errors first| ).
     ELSE.
       process_materials( ).        "simulate / post
+      read_posted_data( ).         "data of the posted materials for the output file
     ENDIF.
 
-    NEW lcl_output( mo_log )->publish( ).
+    NEW lcl_output( mo_log )->publish( mt_sheet ).
   ENDMETHOD.
 
 *----------------------------------------------------------------------*
@@ -4530,6 +4849,14 @@ CLASS lcl_app IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
 
+      IF lv_mat_ok = abap_true AND p_test = abap_false.
+        "successfully posted: rows for the output file (sheet MATERIAL_DATA)
+        LOOP AT mt_row INTO DATA(ls_prow2) USING KEY k_mat WHERE matkey = lv_matkey.
+          APPEND VALUE #( row = ls_prow2-row matnr = lv_matnr werks = ls_prow2-werks
+                          vkorg = ls_prow2-vkorg vtweg = ls_prow2-vtweg ) TO mt_posted.
+        ENDLOOP.
+      ENDIF.
+
       IF lv_mat_ok = abap_true.
         lv_ok_cnt = lv_ok_cnt + 1.
       ELSE.
@@ -4540,6 +4867,24 @@ CLASS lcl_app IMPLEMENTATION.
     mo_log->add( iv_type = COND #( WHEN lv_fail_cnt > 0 THEN 'W' ELSE 'S' )
                  iv_text = |{ lv_mode } finished: { lv_ok_cnt } material(s) successful, | &&
                            |{ lv_fail_cnt } failed, { lv_skip_cnt } skipped| ).
+  ENDMETHOD.
+
+  METHOD read_posted_data.
+    "Read the posted materials back (BAPI_MATERIAL_GET_ALL, classification) for the
+    "output file. A material that can not be read is listed without data.
+    LOOP AT mt_posted INTO DATA(ls_post).
+      TRY.
+          APPEND VALUE #( row   = ls_post-row
+                          matnr = ls_post-matnr
+                          data  = mo_bapi->read_material_data( ls_post ) ) TO mt_sheet.
+        CATCH lcx_error INTO DATA(lx_error).
+          APPEND VALUE #( row = ls_post-row matnr = ls_post-matnr ) TO mt_sheet.
+          mo_log->add( iv_type  = 'W'
+                       is_row   = VALUE ty_row( mt_row[ KEY k_row COMPONENTS row = ls_post-row ] OPTIONAL )
+                       iv_matnr = ls_post-matnr
+                       iv_text  = |Material data for the output file could not be read: { lx_error->get_text( ) }| ).
+      ENDTRY.
+    ENDLOOP.
   ENDMETHOD.
 
   METHOD build_call.

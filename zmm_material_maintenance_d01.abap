@@ -367,4 +367,33 @@ TYPES:
     matnr TYPE mlgn-matnr,
     lgnum TYPE mlgn-lgnum,
   END OF ty_ex_mlgn,
-  tt_ex_mlgn TYPE SORTED TABLE OF ty_ex_mlgn WITH UNIQUE KEY matnr lgnum.
+  tt_ex_mlgn TYPE SORTED TABLE OF ty_ex_mlgn WITH UNIQUE KEY matnr lgnum,
+
+  "BAPI_MATERIAL_GET_ALL result: raw parts (structures / tables of the interface)
+  BEGIN OF ty_rawpart,
+    param TYPE fieldname,
+    table TYPE abap_bool,
+    data  TYPE REF TO data,
+  END OF ty_rawpart,
+  tt_rawpart TYPE STANDARD TABLE OF ty_rawpart WITH EMPTY KEY,
+
+  "Output file, sheet 2: data of the successfully posted materials
+  BEGIN OF ty_kv,
+    name  TYPE string,
+    value TYPE string,
+  END OF ty_kv,
+  tt_kv TYPE STANDARD TABLE OF ty_kv WITH EMPTY KEY,
+  BEGIN OF ty_postkey,                 "posted template row
+    row   TYPE i,
+    matnr TYPE matnr,
+    werks TYPE werks_d,
+    vkorg TYPE vkorg,
+    vtweg TYPE vtweg,
+  END OF ty_postkey,
+  tt_postkey TYPE STANDARD TABLE OF ty_postkey WITH EMPTY KEY,
+  BEGIN OF ty_posted,                  "data of a posted template row
+    row   TYPE i,
+    matnr TYPE matnr,
+    data  TYPE tt_kv,
+  END OF ty_posted,
+  tt_posted TYPE STANDARD TABLE OF ty_posted WITH EMPTY KEY.
