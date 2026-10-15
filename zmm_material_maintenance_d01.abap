@@ -16,19 +16,21 @@ CONSTANTS:
     extend TYPE z_de_op_id VALUE 'E',
   END OF gc_op,
 
-  "Maximum number of data rows (records) of the input file. More rows = error, nothing
-  "is processed. Per run mode (foreground / background) and operation.
+  "Maximum number of data rows (records) of the input file per operation. Above the
+  "limit the file is rejected (error, nothing is processed):
+  "  FG   = limit in foreground (dialog): more rows must be run in background
+  "  HARD = absolute maximum, foreground and background
   BEGIN OF gc_max_rows,
-    BEGIN OF fg,                              "foreground (dialog)
-      create TYPE i VALUE 999,
-      update TYPE i VALUE 999,
-      extend TYPE i VALUE 999,
+    BEGIN OF fg,
+      create TYPE i VALUE 1000,
+      update TYPE i VALUE 1000,
+      extend TYPE i VALUE 1000,
     END OF fg,
-    BEGIN OF bg,                              "background job
-      create TYPE i VALUE 999,
-      update TYPE i VALUE 999,
-      extend TYPE i VALUE 999,
-    END OF bg,
+    BEGIN OF hard,
+      create TYPE i VALUE 2000,
+      update TYPE i VALUE 2000,
+      extend TYPE i VALUE 2000,
+    END OF hard,
   END OF gc_max_rows,
 
   BEGIN OF gc_view,                           "view tables
