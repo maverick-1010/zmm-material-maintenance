@@ -253,10 +253,10 @@ CLASS lcl_template DEFINITION FINAL.
       download,
       template_columns RETURNING VALUE(rt_cols) TYPE tt_fieldname,
       get_temp_matnr IMPORTING is_row TYPE ty_row RETURNING VALUE(rv_matnr) TYPE matnr,
-      build_result_xlsx IMPORTING it_log          TYPE tt_msg_out
-                                  it_posted       TYPE tt_posted
-                                  iv_test         TYPE abap_bool
-                        RETURNING VALUE(rv_xlsx)  TYPE xstring.
+      add_data_sheet IMPORTING iv_xlsx        TYPE xstring
+                               it_posted      TYPE tt_posted
+                               iv_test        TYPE abap_bool
+                     RETURNING VALUE(rv_xlsx) TYPE xstring.
   PRIVATE SECTION.
     CONSTANTS:
       BEGIN OF c_style,                 "cellXfs index in styles.xml
@@ -280,8 +280,6 @@ CLASS lcl_template DEFINITION FINAL.
                                iv_variant     TYPE csequence
                      RETURNING VALUE(rv_xlsx) TYPE xstring,
       sheet_template IMPORTING it_cols       TYPE tt_col
-                     RETURNING VALUE(rv_xml) TYPE string,
-      sheet_log      IMPORTING it_log        TYPE tt_msg_out
                      RETURNING VALUE(rv_xml) TYPE string,
       sheet_data     IMPORTING it_posted     TYPE tt_posted
                                iv_test       TYPE abap_bool

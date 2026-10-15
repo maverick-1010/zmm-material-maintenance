@@ -2081,23 +2081,22 @@ CLASS lcl_output IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD to_xlsx.
-    "Output file as xlsx with two sheets: ALV_OUTPUT (the log) and MATERIAL_DATA
-    "(successfully posted materials). If that fails, the ALV export (log only) is
-    "used; initial if both fail.
+    "Output file as xlsx: sheet 1 = the ALV export as it is, sheet 2 = MATERIAL_DATA
+    "(successfully posted materials). Initial if the ALV export fails; without
+    "sheet 2 if that can not be added.
     TRY.
-        rv_xdata = lcl_template=>build_result_xlsx( it_log    = mt_out
-                                                    it_posted = mt_posted
-                                                    iv_test   = p_test ).
+        rv_xdata = mo_alv->to_xml( xml_type = if_salv_bs_xml=>c_type_xlsx ).
       CATCH cx_root.
         CLEAR rv_xdata.
+        RETURN.
     ENDTRY.
-    IF rv_xdata IS INITIAL.
-      TRY.
-          rv_xdata = mo_alv->to_xml( xml_type = if_salv_bs_xml=>c_type_xlsx ).
-        CATCH cx_root.
-          CLEAR rv_xdata.
-      ENDTRY.
-    ENDIF.
+    TRY.
+        rv_xdata = lcl_template=>add_data_sheet( iv_xlsx    = rv_xdata
+                                                 it_posted  = mt_posted
+                                                 iv_test    = p_test ).
+      CATCH cx_root.
+        "keep the ALV export
+    ENDTRY.
   ENDMETHOD.
 
   METHOD file_name.
@@ -2357,116 +2356,60 @@ CLASS lcl_template IMPLEMENTATION.
     rv_xlsx = lo_zip->save( ).
   ENDMETHOD.
 
-  METHOD build_result_xlsx.
-    "Output file (server file / e-mail): sheet ALV_OUTPUT = the log as shown in the
-    "ALV, sheet MATERIAL_DATA = data of the successfully posted materials.
+  METHOD add_data_sheet.
+    "Add the sheet MATERIAL_DATA to the xlsx export of the ALV (sheet 1 stays the
+    "ALV output as it is). The ALV workbook is opened as zip: sheet file, entry in
+    "workbook.xml, relationship and content type are added. If the workbook has an
+    "unexpected structure it is returned unchanged.
+    CONSTANTS: lc_part TYPE string VALUE 'xl/worksheets/sheet_matdata.xml',
+               lc_rns  TYPE string VALUE `http://schemas.openxmlformats.org/officeDocument/2006/relationships`.
+    DATA: lx_wb   TYPE xstring,
+          lx_rel  TYPE xstring,
+          lx_type TYPE xstring.
+
+    rv_xlsx = iv_xlsx.
     DATA(lo_zip) = NEW cl_abap_zip( ).
+    lo_zip->load( EXPORTING zip = iv_xlsx EXCEPTIONS zip_parse_error = 1 OTHERS = 2 ).
+    CHECK sy-subrc = 0.
+    lo_zip->get( EXPORTING name = 'xl/workbook.xml' IMPORTING content = lx_wb EXCEPTIONS OTHERS = 1 ).
+    CHECK sy-subrc = 0.
+    lo_zip->get( EXPORTING name = 'xl/_rels/workbook.xml.rels' IMPORTING content = lx_rel EXCEPTIONS OTHERS = 1 ).
+    CHECK sy-subrc = 0.
+    lo_zip->get( EXPORTING name = '[Content_Types].xml' IMPORTING content = lx_type EXCEPTIONS OTHERS = 1 ).
+    CHECK sy-subrc = 0.
 
-    lo_zip->add( name    = '[Content_Types].xml'
-                 content = utf8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
-      `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` &&
-      `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` &&
-      `<Default Extension="xml" ContentType="application/xml"/>` &&
-      `<Override PartName="/xl/workbook.xml" ` &&
-      `ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` &&
-      `<Override PartName="/xl/worksheets/sheet1.xml" ` &&
-      `ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` &&
-      `<Override PartName="/xl/worksheets/sheet2.xml" ` &&
-      `ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` &&
-      `<Override PartName="/xl/styles.xml" ` &&
-      `ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` &&
-      `</Types>` ) ).
+    DATA(lv_wb)   = cl_abap_codepage=>convert_from( lx_wb ).
+    DATA(lv_rel)  = cl_abap_codepage=>convert_from( lx_rel ).
+    DATA(lv_type) = cl_abap_codepage=>convert_from( lx_type ).
+    CHECK lv_wb CS '</sheets>' AND lv_rel CS '</Relationships>' AND lv_type CS '</Types>'.
 
-    lo_zip->add( name    = '_rels/.rels'
-                 content = utf8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
-      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` &&
-      `<Relationship Id="rId1" ` &&
-      `Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" ` &&
-      `Target="xl/workbook.xml"/>` &&
-      `</Relationships>` ) ).
+    "namespace prefix r: for the relationship id of the new sheet
+    IF lv_wb NS 'xmlns:r='.
+      lv_wb = replace( val = lv_wb sub = `<workbook` with = |<workbook xmlns:r="{ lc_rns }"| occ = 1 ).
+      CHECK lv_wb CS 'xmlns:r='.
+    ENDIF.
+    lv_wb   = replace( val = lv_wb sub = `</sheets>`
+                       with = `<sheet name="MATERIAL_DATA" sheetId="999" r:id="rIdMatData"/></sheets>` occ = 1 ).
+    lv_rel  = replace( val = lv_rel sub = `</Relationships>`
+                       with = |<Relationship Id="rIdMatData" Type="{ lc_rns }/worksheet" | &&
+                              |Target="worksheets/sheet_matdata.xml"/></Relationships>| occ = 1 ).
+    lv_type = replace( val = lv_type sub = `</Types>`
+                       with = |<Override PartName="/{ lc_part }" | &&
+                              |ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>|
+                       occ = 1 ).
 
-    lo_zip->add( name    = 'xl/workbook.xml'
-                 content = utf8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
-      `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` &&
-      `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` &&
-      `<sheets><sheet name="ALV_OUTPUT" sheetId="1" r:id="rId1"/>` &&
-      `<sheet name="MATERIAL_DATA" sheetId="2" r:id="rId2"/></sheets>` &&
-      `</workbook>` ) ).
-
-    lo_zip->add( name    = 'xl/_rels/workbook.xml.rels'
-                 content = utf8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
-      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` &&
-      `<Relationship Id="rId1" ` &&
-      `Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" ` &&
-      `Target="worksheets/sheet1.xml"/>` &&
-      `<Relationship Id="rId2" ` &&
-      `Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" ` &&
-      `Target="worksheets/sheet2.xml"/>` &&
-      `<Relationship Id="rId3" ` &&
-      `Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" ` &&
-      `Target="styles.xml"/>` &&
-      `</Relationships>` ) ).
-
-    lo_zip->add( name = 'xl/styles.xml'            content = utf8( styles( ) ) ).
-    lo_zip->add( name = 'xl/worksheets/sheet1.xml' content = utf8( sheet_log( it_log ) ) ).
-    lo_zip->add( name = 'xl/worksheets/sheet2.xml' content = utf8( sheet_data( it_posted = it_posted
-                                                                               iv_test   = iv_test ) ) ).
+    lo_zip->delete( EXPORTING name = 'xl/workbook.xml' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->delete( EXPORTING name = 'xl/_rels/workbook.xml.rels' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->delete( EXPORTING name = '[Content_Types].xml' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->add( name = 'xl/workbook.xml'            content = utf8( lv_wb ) ).
+    lo_zip->add( name = 'xl/_rels/workbook.xml.rels' content = utf8( lv_rel ) ).
+    lo_zip->add( name = '[Content_Types].xml'        content = utf8( lv_type ) ).
+    lo_zip->add( name = lc_part content = utf8( sheet_data( it_posted = it_posted iv_test = iv_test ) ) ).
     rv_xlsx = lo_zip->save( ).
   ENDMETHOD.
 
-  METHOD sheet_log.
-    "Sheet 1 = the log like the ALV (same columns), status as text
-    DATA: lt_rows  TYPE string_table,
-          lv_cells TYPE string,
-          lv_row   TYPE i.
-
-    DATA(lt_head) = VALUE string_table( ( `Status` ) ( `Type` ) ( `Template Row` ) ( `Material` ) ( `Plant` )
-                                        ( `Sales Org` ) ( `Distr. Channel` ) ( `View` ) ( `Template Field` )
-                                        ( `Field Description` ) ( `Message` ) ).
-    LOOP AT lt_head INTO DATA(lv_head).
-      lv_cells = lv_cells && cell( iv_col = sy-tabix iv_row = 1 iv_value = lv_head iv_style = c_style-header ).
-    ENDLOOP.
-    APPEND |<row r="1">{ lv_cells }</row>| TO lt_rows.
-
-    LOOP AT it_log INTO DATA(ls_log).
-      lv_row = sy-tabix + 1.
-      DATA(lt_vals) = VALUE string_table(
-        ( SWITCH string( ls_log-msgty WHEN 'E' THEN `Error` WHEN 'W' THEN `Warning` ELSE `Success` ) )
-        ( CONV string( ls_log-msgty ) )
-        ( COND string( WHEN ls_log-row > 0 THEN CONV string( ls_log-row ) ) )
-        ( CONV string( ls_log-matnr ) )
-        ( CONV string( ls_log-werks ) )
-        ( CONV string( ls_log-vkorg ) )
-        ( CONV string( ls_log-vtweg ) )
-        ( CONV string( ls_log-view ) )
-        ( CONV string( ls_log-field ) )
-        ( CONV string( ls_log-fdesc ) )
-        ( CONV string( ls_log-text ) ) ).
-      CLEAR lv_cells.
-      LOOP AT lt_vals INTO DATA(lv_val).
-        lv_cells = lv_cells && cell( iv_col = sy-tabix iv_row = lv_row iv_value = lv_val iv_style = c_style-text ).
-      ENDLOOP.
-      APPEND |<row r="{ lv_row }">{ lv_cells }</row>| TO lt_rows.
-    ENDLOOP.
-
-    rv_xml =
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
-      `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` &&
-      `<sheetViews><sheetView workbookViewId="0">` &&
-      `<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>` &&
-      `</sheetView></sheetViews>` &&
-      `<cols><col min="1" max="10" width="18" customWidth="1"/>` &&
-      `<col min="11" max="11" width="110" customWidth="1"/></cols>` &&
-      |<sheetData>{ concat_lines_of( lt_rows ) }</sheetData>| &&
-      `</worksheet>`.
-  ENDMETHOD.
-
   METHOD sheet_data.
-    "Sheet 2 = successfully posted materials: ROW_NO, MATERIAL and every field with
+    "Sheet MATERIAL_DATA = successfully posted materials: ROW_NO, MATERIAL and every field with
     "a value that BAPI_MATERIAL_GET_ALL returned (+ classification). The columns are
     "the names found in any of the materials, in the order of their first occurrence.
     TYPES: BEGIN OF lty_idx,
@@ -2491,7 +2434,7 @@ CLASS lcl_template IMPLEMENTATION.
       rv_xml =
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` &&
         `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` &&
-        |<sheetData><row r="1">{ cell( iv_col = 1 iv_row = 1 iv_value = lv_msg iv_style = c_style-bold ) }</row></sheetData>| &&
+        |<sheetData><row r="1">{ cell( iv_col = 1 iv_row = 1 iv_value = lv_msg iv_style = 0 ) }</row></sheetData>| &&
         `</worksheet>`.
       RETURN.
     ENDIF.
@@ -2507,10 +2450,10 @@ CLASS lcl_template IMPLEMENTATION.
     ENDLOOP.
 
     "Header row
-    lv_cells = cell( iv_col = 1 iv_row = 1 iv_value = `ROW_NO`    iv_style = c_style-control ) &&
-               cell( iv_col = 2 iv_row = 1 iv_value = `MATERIAL`  iv_style = c_style-control ).
+    lv_cells = cell( iv_col = 1 iv_row = 1 iv_value = `ROW_NO`    iv_style = 0 ) &&
+               cell( iv_col = 2 iv_row = 1 iv_value = `MATERIAL`  iv_style = 0 ).
     LOOP AT lt_names INTO DATA(lv_name).
-      lv_cells = lv_cells && cell( iv_col = sy-tabix + 2 iv_row = 1 iv_value = lv_name iv_style = c_style-header ).
+      lv_cells = lv_cells && cell( iv_col = sy-tabix + 2 iv_row = 1 iv_value = lv_name iv_style = 0 ).
     ENDLOOP.
     APPEND |<row r="1">{ lv_cells }</row>| TO lt_rows.
 
@@ -2526,7 +2469,7 @@ CLASS lcl_template IMPLEMENTATION.
       SORT lt_cells BY col.
       CLEAR lv_cells.
       LOOP AT lt_cells INTO DATA(ls_cell).
-        lv_cells = lv_cells && cell( iv_col = ls_cell-col iv_row = lv_row iv_value = ls_cell-value iv_style = c_style-text ).
+        lv_cells = lv_cells && cell( iv_col = ls_cell-col iv_row = lv_row iv_value = ls_cell-value iv_style = 0 ).
       ENDLOOP.
       APPEND |<row r="{ lv_row }">{ lv_cells }</row>| TO lt_rows.
     ENDLOOP.
