@@ -175,6 +175,7 @@ CLASS lcl_material_bapi DEFINITION FINAL.
       save_material       IMPORTING is_call      TYPE ty_call
                                     it_rows      TYPE tt_row
                                     iv_matnr     TYPE matnr
+                                    iv_simulate  TYPE abap_bool DEFAULT abap_false
                           RETURNING VALUE(rv_ok) TYPE abap_bool,
       classify            IMPORTING is_class     TYPE ty_bapi
                                     is_row       TYPE ty_row
@@ -195,6 +196,7 @@ CLASS lcl_material_bapi DEFINITION FINAL.
                                  iv_msg       TYPE csequence
                                  is_row       TYPE ty_row
                                  iv_matnr     TYPE matnr
+                                 iv_simulate  TYPE abap_bool DEFAULT abap_false
                        RETURNING VALUE(rv_ok) TYPE abap_bool.
 ENDCLASS.
 

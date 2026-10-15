@@ -1483,20 +1483,24 @@ CLASS lcl_material_bapi IMPLEMENTATION.
   METHOD save_material.
     "BAPI_MATERIAL_SAVEREPLICA - one call per material with all org. levels
     "Test run: TESTRUN = 'X' -> complete check without database update
+    "IV_SIMULATE: pre-check of a real run (simulation with a temporary number,
+    "nothing is posted, only failures are logged)
     FIELD-SYMBOLS: <lv_param> TYPE any,
                    <lv_line>  TYPE any.
-    DATA: ls_call   TYPE ty_call,
+    DATA: lv_test   TYPE abap_bool,
+          ls_call   TYPE ty_call,
           ls_return TYPE bapiret2,
           lt_retmsg TYPE STANDARD TABLE OF bapie1ret2.
 
     ls_call = is_call.                          "TABLES parameters must be changeable
     DATA(ls_first) = VALUE ty_row( it_rows[ 1 ] OPTIONAL ).
+    lv_test = xsdbool( p_test = abap_true OR iv_simulate = abap_true ).
 
     CALL FUNCTION 'BAPI_MATERIAL_SAVEREPLICA'
       EXPORTING
         noappllog            = abap_true
         nochangedoc          = abap_false
-        testrun              = p_test
+        testrun              = lv_test
         inpfldcheck          = space
       IMPORTING
         return               = ls_return
@@ -1581,7 +1585,8 @@ CLASS lcl_material_bapi IMPLEMENTATION.
       iv_msg   = COND string( WHEN ls_return-message IS INITIAL THEN `processed`
                               ELSE ls_return-message )
       is_row   = ls_first
-      iv_matnr = iv_matnr ).
+      iv_matnr = iv_matnr
+      iv_simulate = iv_simulate ).
   ENDMETHOD.
 
   METHOD classify.
@@ -1782,7 +1787,15 @@ CLASS lcl_material_bapi IMPLEMENTATION.
     DATA ls_commit TYPE bapiret2.
     rv_ok = iv_ok.
 
-    IF p_test = abap_true.
+    IF iv_simulate = abap_true.
+      "Pre-check of a real run: always rolled back, only a failure is logged
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      CALL FUNCTION 'DEQUEUE_ALL'.
+      IF rv_ok = abap_false.
+        mo_log->add( iv_type = 'E' is_row = is_row iv_matnr = iv_matnr
+                     iv_text = |Pre-check simulation failed - { iv_what }: { iv_msg }| ).
+      ENDIF.
+    ELSEIF p_test = abap_true.
       CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
       CALL FUNCTION 'DEQUEUE_ALL'.
       mo_log->add( iv_type = COND #( WHEN rv_ok = abap_true THEN 'S' ELSE 'E' )
@@ -4391,6 +4404,33 @@ CLASS lcl_app IMPLEMENTATION.
                      iv_text = |{ lv_mode } skipped - material has validation errors| ).
         lv_skip_cnt = lv_skip_cnt + 1.
         CONTINUE.
+      ENDIF.
+
+      "--- Internal numbering in a real run: simulate first with a temporary number.
+      "    A number is only drawn from the number range if the simulation is
+      "    successful, so a failing material does not use up a number.
+      IF p_test = abap_false AND
+         lcl_screen=>get_operation( ) = gc_op-create AND
+         lcl_mapper=>is_dummy_key( ls_first-matkey ) = abap_true.
+        DATA(lv_temp)   = lcl_template=>get_temp_matnr( ls_first ).
+        DATA(lv_pre_ok) = abap_true.
+        LOOP AT mt_row INTO DATA(ls_prow) USING KEY k_mat WHERE matkey = lv_matkey.
+          IF mo_bapi->save_material( is_call     = build_call( iv_matkey = lv_matkey
+                                                               iv_matnr  = lv_temp
+                                                               iv_row    = ls_prow-row )
+                                     it_rows     = VALUE #( ( ls_prow ) )
+                                     iv_matnr    = lv_temp
+                                     iv_simulate = abap_true ) = abap_false.
+            lv_pre_ok = abap_false.
+          ENDIF.
+        ENDLOOP.
+        IF lv_pre_ok = abap_false.
+          mo_log->add( iv_type = 'E' is_row = ls_first
+                       iv_text = 'Posting not executed - simulation with a temporary number failed ' &&
+                                 '(no material number was drawn)' ).
+          lv_fail_cnt = lv_fail_cnt + 1.
+          CONTINUE.
+        ENDIF.
       ENDIF.
 
       DATA(lv_matnr) = mo_bapi->get_material_number( ls_first ).
