@@ -901,16 +901,11 @@ CLASS lcl_file_reader IMPLEMENTATION.
     TRY.
         lo_xl = NEW #( document_name = `template.xlsx` xdocument = iv_xdata ).
       CATCH cx_fdt_excel_core INTO DATA(lx_xl).
-        "full cause: exception class, text and the chain of previous exceptions
-        DATA(lv_cause) = |{ cl_abap_classdescr=>describe_by_object_ref( lx_xl )->get_relative_name( ) }: { lx_xl->get_text( ) }|.
-        DATA(lx_prev) = lx_xl->previous.
-        WHILE lx_prev IS BOUND.
-          lv_cause = |{ lv_cause } / { cl_abap_classdescr=>describe_by_object_ref( lx_prev )->get_relative_name( ) }: { lx_prev->get_text( ) }|.
-          lx_prev = lx_prev->previous.
-        ENDWHILE.
+        "BRFplus exceptions only say 'A BRFplus exception occurred' in GET_TEXT: the
+        "reason is in their attributes (message table, text id ...) - listed here
         RAISE EXCEPTION TYPE lcx_error
           EXPORTING
-            iv_text = |File { iv_file } is not a valid XLSX file ({ lv_size } bytes): { lv_cause }|.
+            iv_text = |File { iv_file } is not a valid XLSX file ({ lv_size } bytes): { exception_details( lx_xl ) }|.
     ENDTRY.
 
     lo_xl->if_fdt_doc_spreadsheet~get_worksheet_names( IMPORTING worksheet_names = DATA(lt_ws) ).
@@ -934,6 +929,60 @@ CLASS lcl_file_reader IMPLEMENTATION.
       ENDDO.
       APPEND lt_values TO rt_raw.
     ENDLOOP.
+  ENDMETHOD.
+
+  METHOD exception_details.
+    "Exception class, text and all public attributes with a value (tables line by
+    "line), also of the previous exceptions - for exceptions whose text says nothing.
+    FIELD-SYMBOLS: <lv_attr> TYPE any,
+                   <lt_attr> TYPE ANY TABLE,
+                   <ls_line> TYPE any.
+    DATA: lv_type TYPE c LENGTH 1,
+          lv_n    TYPE i.
+
+    DATA(lx) = ix_root.
+    WHILE lx IS BOUND.
+      DATA(lo_cls) = CAST cl_abap_classdescr( cl_abap_typedescr=>describe_by_object_ref( lx ) ).
+      rv_text = rv_text && |[{ lo_cls->get_relative_name( ) }: { lx->get_text( ) }|.
+      LOOP AT lo_cls->attributes INTO DATA(ls_attr)
+           WHERE is_class = abap_false AND visibility = cl_abap_objectdescr=>public.
+        CHECK ls_attr-name <> 'PREVIOUS'.
+        ASSIGN lx->(ls_attr-name) TO <lv_attr>.
+        CHECK sy-subrc = 0.
+        DESCRIBE FIELD <lv_attr> TYPE lv_type.
+        IF lv_type = 'h'.                                        "table: line by line
+          ASSIGN <lv_attr> TO <lt_attr>.
+          CLEAR lv_n.
+          LOOP AT <lt_attr> ASSIGNING <ls_line>.
+            lv_n = lv_n + 1.
+            IF lv_n > 20.
+              EXIT.
+            ENDIF.
+            rv_text = rv_text && | { ls_attr-name }({ lv_n })={ flat_value( <ls_line> ) }|.
+          ENDLOOP.
+        ELSEIF <lv_attr> IS NOT INITIAL.
+          rv_text = rv_text && | { ls_attr-name }={ flat_value( <lv_attr> ) }|.
+        ENDIF.
+      ENDLOOP.
+      rv_text = rv_text && `]`.
+      lx = lx->previous.
+    ENDWHILE.
+  ENDMETHOD.
+
+  METHOD flat_value.
+    "Value as text: elementary field or structure (fields with a value)
+    DATA(lo_type) = cl_abap_typedescr=>describe_by_data( ig_value ).
+    CASE lo_type->kind.
+      WHEN cl_abap_typedescr=>kind_elem.
+        rv_text = condense( |{ ig_value }| ).
+      WHEN cl_abap_typedescr=>kind_struct.
+        DATA(lo_struct) = CAST cl_abap_structdescr( lo_type ).
+        LOOP AT lo_struct->components INTO DATA(ls_comp).
+          ASSIGN COMPONENT ls_comp-name OF STRUCTURE ig_value TO FIELD-SYMBOL(<lv_comp>).
+          CHECK sy-subrc = 0 AND <lv_comp> IS NOT INITIAL.
+          rv_text = rv_text && |{ ls_comp-name }={ flat_value( <lv_comp> ) } |.
+        ENDLOOP.
+    ENDCASE.
   ENDMETHOD.
 
   METHOD parse_csv.

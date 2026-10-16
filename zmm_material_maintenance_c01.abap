@@ -115,7 +115,11 @@ CLASS lcl_file_reader DEFINITION FINAL.
       parse_csv       IMPORTING it_lines TYPE string_table
                       RETURNING VALUE(rt_raw) TYPE tt_raw,
       split_csv_line  IMPORTING iv_line TYPE string iv_sep TYPE string
-                      RETURNING VALUE(rt_fields) TYPE string_table.
+                      RETURNING VALUE(rt_fields) TYPE string_table,
+      exception_details IMPORTING ix_root TYPE REF TO cx_root
+                        RETURNING VALUE(rv_text) TYPE string,
+      flat_value      IMPORTING ig_value TYPE any
+                      RETURNING VALUE(rv_text) TYPE string.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
