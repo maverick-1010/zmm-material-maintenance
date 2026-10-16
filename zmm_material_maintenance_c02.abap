@@ -753,20 +753,17 @@ CLASS lcl_file_reader IMPLEMENTATION.
 
   METHOD read.
     "Read the template file from the PC or the application server and return the
-    "rows as raw string table. Supported: .xlsx and .csv. Local and application-server
-    "files take the same way after reading (same bytes / lines -> same parser).
-    "A server path is taken without leading / trailing blanks.
-    DATA(lv_file) = COND string( WHEN iv_server = abap_true THEN condense( iv_file ) ELSE iv_file ).
-    CASE get_extension( lv_file ).
+    "rows as raw string table. Supported: .xlsx and .csv.
+    CASE get_extension( iv_file ).
       WHEN 'xlsx'.
-        rt_raw = parse_xlsx( iv_xdata = read_binary( iv_file = lv_file iv_server = iv_server )
-                             iv_file  = lv_file ).
+        rt_raw = parse_xlsx( iv_xdata = read_binary( iv_file = iv_file iv_server = iv_server )
+                             iv_file  = iv_file ).
       WHEN 'csv'.
-        rt_raw = parse_csv( read_text_lines( iv_file = lv_file iv_server = iv_server ) ).
+        rt_raw = parse_csv( read_text_lines( iv_file = iv_file iv_server = iv_server ) ).
       WHEN OTHERS.
         RAISE EXCEPTION TYPE lcx_error
           EXPORTING
-            iv_text = |File { lv_file } not supported - only .xlsx and .csv files are allowed|.
+            iv_text = |File { iv_file } not supported - only .xlsx and .csv files are allowed|.
     ENDCASE.
 
     IF lines( rt_raw ) < gc_data_row.
@@ -796,32 +793,16 @@ CLASS lcl_file_reader IMPLEMENTATION.
       ENDIF.
       rv_xdata = cl_bcs_convert=>solix_to_xstring( it_solix = lt_bin iv_size = lv_len ).
     ELSE.
-      "binary, in blocks: the complete file, whatever its length (the last block may be short)
-      DATA: lv_buf TYPE x LENGTH 32768,
-            lv_act TYPE i.
       TRY.
           OPEN DATASET iv_file FOR INPUT IN BINARY MODE.
           IF sy-subrc <> 0.
             RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = |Cannot open file { iv_file }|.
           ENDIF.
-          DO.
-            CLEAR lv_act.
-            READ DATASET iv_file INTO lv_buf ACTUAL LENGTH lv_act.
-            IF lv_act > 0.
-              rv_xdata = rv_xdata && lv_buf(lv_act).
-            ENDIF.
-            IF sy-subrc <> 0 OR lv_act = 0.
-              EXIT.                                  "end of file
-            ENDIF.
-          ENDDO.
+          READ DATASET iv_file INTO rv_xdata.
           CLOSE DATASET iv_file.
         CATCH cx_sy_file_open cx_sy_file_authority cx_sy_file_io INTO DATA(lx_file).
           RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = lx_file->get_text( ).
       ENDTRY.
-    ENDIF.
-
-    IF xstrlen( rv_xdata ) = 0.
-      RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = |File { iv_file } is empty|.
     ENDIF.
   ENDMETHOD.
 
@@ -882,51 +863,12 @@ CLASS lcl_file_reader IMPLEMENTATION.
     DATA: lo_xl     TYPE REF TO cl_fdt_xl_spreadsheet,
           lt_values TYPE string_table.
 
-    "An .xlsx file is a zip archive: it starts with the bytes 'PK'. Anything else
-    "(e.g. a file changed by a text mode transfer, an old .xls, a CSV with the wrong
-    "extension) is reported with its size and first bytes.
-    DATA(lv_size) = xstrlen( iv_xdata ).
-    DATA(lv_pk)   = CONV xstring( '504B' ).
-    IF lv_size < 4 OR iv_xdata(2) <> lv_pk.
-      DATA(lv_head) = COND xstring( WHEN lv_size >= 4 THEN iv_xdata(4) ELSE iv_xdata ).
-      RAISE EXCEPTION TYPE lcx_error
-        EXPORTING
-          iv_text = |File { iv_file } is not a valid XLSX file ({ lv_size } bytes, starts with { lv_head }) | &&
-                    |- for a file on the application server check that it was copied in binary mode|.
-    ENDIF.
-
-    "Zip structure: a file copied to the server in text (ASCII) mode - e.g. CG3Z with
-    "transfer format ASC - still starts with 'PK', but its line feed bytes are changed,
-    "so offsets and checksums inside the archive are broken. The Excel reader then only
-    "says 'A BRFplus exception occurred'; this check names the real cause.
-    DATA lx_part TYPE xstring.
-    DATA(lo_zip) = NEW cl_abap_zip( ).
-    lo_zip->load( EXPORTING zip = iv_xdata EXCEPTIONS OTHERS = 1 ).
-    DATA(lv_zip_ok) = xsdbool( sy-subrc = 0 ).
-    IF lv_zip_ok = abap_true.
-      lo_zip->get( EXPORTING name = 'xl/workbook.xml' IMPORTING content = lx_part EXCEPTIONS OTHERS = 1 ).
-      lv_zip_ok = xsdbool( sy-subrc = 0 AND lx_part IS NOT INITIAL ).
-    ENDIF.
-    IF lv_zip_ok = abap_false.
-      RAISE EXCEPTION TYPE lcx_error
-        EXPORTING
-          iv_text = |File { iv_file } is damaged or not an Excel workbook ({ lv_size } bytes, zip content | &&
-                    |not readable). A file copied to the application server in text mode (e.g. CG3Z | &&
-                    |with format ASC) is damaged this way - copy it again in binary mode (BIN) and | &&
-                    |check that the size is the same as on the PC|.
-    ENDIF.
-
-    "The document name is only a label for the reader: a neutral name instead of the
-    "path, so that dots / backslashes / directories of a PC or server path can not
-    "disturb it (same call for local and application-server files).
     TRY.
-        lo_xl = NEW #( document_name = `template.xlsx` xdocument = iv_xdata ).
+        lo_xl = NEW #( document_name = iv_file xdocument = iv_xdata ).
       CATCH cx_fdt_excel_core INTO DATA(lx_xl).
-        "BRFplus exceptions only say 'A BRFplus exception occurred' in GET_TEXT: the
-        "reason is in their attributes (message table, text id ...) - listed here
         RAISE EXCEPTION TYPE lcx_error
           EXPORTING
-            iv_text = |File { iv_file } is not a valid XLSX file ({ lv_size } bytes): { exception_details( lx_xl ) }|.
+            iv_text = |File is not a valid XLSX file: { lx_xl->get_text( ) }|.
     ENDTRY.
 
     lo_xl->if_fdt_doc_spreadsheet~get_worksheet_names( IMPORTING worksheet_names = DATA(lt_ws) ).
@@ -950,60 +892,6 @@ CLASS lcl_file_reader IMPLEMENTATION.
       ENDDO.
       APPEND lt_values TO rt_raw.
     ENDLOOP.
-  ENDMETHOD.
-
-  METHOD exception_details.
-    "Exception class, text and all public attributes with a value (tables line by
-    "line), also of the previous exceptions - for exceptions whose text says nothing.
-    FIELD-SYMBOLS: <lv_attr> TYPE any,
-                   <lt_attr> TYPE ANY TABLE,
-                   <ls_line> TYPE any.
-    DATA: lv_type TYPE c LENGTH 1,
-          lv_n    TYPE i.
-
-    DATA(lx) = ix_root.
-    WHILE lx IS BOUND.
-      DATA(lo_cls) = CAST cl_abap_classdescr( cl_abap_typedescr=>describe_by_object_ref( lx ) ).
-      rv_text = rv_text && |[{ lo_cls->get_relative_name( ) }: { lx->get_text( ) }|.
-      LOOP AT lo_cls->attributes INTO DATA(ls_attr)
-           WHERE is_class = abap_false AND visibility = cl_abap_objectdescr=>public.
-        CHECK ls_attr-name <> 'PREVIOUS'.
-        ASSIGN lx->(ls_attr-name) TO <lv_attr>.
-        CHECK sy-subrc = 0.
-        DESCRIBE FIELD <lv_attr> TYPE lv_type.
-        IF lv_type = 'h'.                                        "table: line by line
-          ASSIGN <lv_attr> TO <lt_attr>.
-          CLEAR lv_n.
-          LOOP AT <lt_attr> ASSIGNING <ls_line>.
-            lv_n = lv_n + 1.
-            IF lv_n > 20.
-              EXIT.
-            ENDIF.
-            rv_text = rv_text && | { ls_attr-name }({ lv_n })={ flat_value( <ls_line> ) }|.
-          ENDLOOP.
-        ELSEIF <lv_attr> IS NOT INITIAL.
-          rv_text = rv_text && | { ls_attr-name }={ flat_value( <lv_attr> ) }|.
-        ENDIF.
-      ENDLOOP.
-      rv_text = rv_text && `]`.
-      lx = lx->previous.
-    ENDWHILE.
-  ENDMETHOD.
-
-  METHOD flat_value.
-    "Value as text: elementary field or structure (fields with a value)
-    DATA(lo_type) = cl_abap_typedescr=>describe_by_data( ig_value ).
-    CASE lo_type->kind.
-      WHEN cl_abap_typedescr=>kind_elem.
-        rv_text = condense( |{ ig_value }| ).
-      WHEN cl_abap_typedescr=>kind_struct.
-        DATA(lo_struct) = CAST cl_abap_structdescr( lo_type ).
-        LOOP AT lo_struct->components INTO DATA(ls_comp).
-          ASSIGN COMPONENT ls_comp-name OF STRUCTURE ig_value TO FIELD-SYMBOL(<lv_comp>).
-          CHECK sy-subrc = 0 AND <lv_comp> IS NOT INITIAL.
-          rv_text = rv_text && |{ ls_comp-name }={ flat_value( <lv_comp> ) } |.
-        ENDLOOP.
-    ENDCASE.
   ENDMETHOD.
 
   METHOD parse_csv.
@@ -2570,10 +2458,9 @@ CLASS lcl_template IMPLEMENTATION.
                               |ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>|
                        occ = 1 ).
 
-    "old versions of the three parts are replaced (a missing part is no error)
-    lo_zip->delete( EXPORTING name = 'xl/workbook.xml' EXCEPTIONS OTHERS = 1 ) ##SUBRC_OK.
-    lo_zip->delete( EXPORTING name = 'xl/_rels/workbook.xml.rels' EXCEPTIONS OTHERS = 1 ) ##SUBRC_OK.
-    lo_zip->delete( EXPORTING name = '[Content_Types].xml' EXCEPTIONS OTHERS = 1 ) ##SUBRC_OK.
+    lo_zip->delete( EXPORTING name = 'xl/workbook.xml' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->delete( EXPORTING name = 'xl/_rels/workbook.xml.rels' EXCEPTIONS OTHERS = 1 ).
+    lo_zip->delete( EXPORTING name = '[Content_Types].xml' EXCEPTIONS OTHERS = 1 ).
     lo_zip->add( name = 'xl/workbook.xml'            content = utf8( lv_wb ) ).
     lo_zip->add( name = 'xl/_rels/workbook.xml.rels' content = utf8( lv_rel ) ).
     lo_zip->add( name = '[Content_Types].xml'        content = utf8( lv_type ) ).
