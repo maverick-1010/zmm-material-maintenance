@@ -2490,9 +2490,10 @@ CLASS lcl_template IMPLEMENTATION.
                               |ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>|
                        occ = 1 ).
 
-    lo_zip->delete( EXPORTING name = 'xl/workbook.xml' EXCEPTIONS OTHERS = 1 ).
-    lo_zip->delete( EXPORTING name = 'xl/_rels/workbook.xml.rels' EXCEPTIONS OTHERS = 1 ).
-    lo_zip->delete( EXPORTING name = '[Content_Types].xml' EXCEPTIONS OTHERS = 1 ).
+    "old versions of the three parts are replaced (a missing part is no error)
+    lo_zip->delete( EXPORTING name = 'xl/workbook.xml' EXCEPTIONS OTHERS = 1 ) ##SUBRC_OK.
+    lo_zip->delete( EXPORTING name = 'xl/_rels/workbook.xml.rels' EXCEPTIONS OTHERS = 1 ) ##SUBRC_OK.
+    lo_zip->delete( EXPORTING name = '[Content_Types].xml' EXCEPTIONS OTHERS = 1 ) ##SUBRC_OK.
     lo_zip->add( name = 'xl/workbook.xml'            content = utf8( lv_wb ) ).
     lo_zip->add( name = 'xl/_rels/workbook.xml.rels' content = utf8( lv_rel ) ).
     lo_zip->add( name = '[Content_Types].xml'        content = utf8( lv_type ) ).
