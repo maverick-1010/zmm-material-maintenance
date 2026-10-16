@@ -753,17 +753,20 @@ CLASS lcl_file_reader IMPLEMENTATION.
 
   METHOD read.
     "Read the template file from the PC or the application server and return the
-    "rows as raw string table. Supported: .xlsx and .csv.
-    CASE get_extension( iv_file ).
+    "rows as raw string table. Supported: .xlsx and .csv. Local and application-server
+    "files take the same way after reading (same bytes / lines -> same parser).
+    "A server path is taken without leading / trailing blanks.
+    DATA(lv_file) = COND string( WHEN iv_server = abap_true THEN condense( iv_file ) ELSE iv_file ).
+    CASE get_extension( lv_file ).
       WHEN 'xlsx'.
-        rt_raw = parse_xlsx( iv_xdata = read_binary( iv_file = iv_file iv_server = iv_server )
-                             iv_file  = iv_file ).
+        rt_raw = parse_xlsx( iv_xdata = read_binary( iv_file = lv_file iv_server = iv_server )
+                             iv_file  = lv_file ).
       WHEN 'csv'.
-        rt_raw = parse_csv( read_text_lines( iv_file = iv_file iv_server = iv_server ) ).
+        rt_raw = parse_csv( read_text_lines( iv_file = lv_file iv_server = iv_server ) ).
       WHEN OTHERS.
         RAISE EXCEPTION TYPE lcx_error
           EXPORTING
-            iv_text = |File { iv_file } not supported - only .xlsx and .csv files are allowed|.
+            iv_text = |File { lv_file } not supported - only .xlsx and .csv files are allowed|.
     ENDCASE.
 
     IF lines( rt_raw ) < gc_data_row.
@@ -793,16 +796,32 @@ CLASS lcl_file_reader IMPLEMENTATION.
       ENDIF.
       rv_xdata = cl_bcs_convert=>solix_to_xstring( it_solix = lt_bin iv_size = lv_len ).
     ELSE.
+      "binary, in blocks: the complete file, whatever its length (the last block may be short)
+      DATA: lv_buf TYPE x LENGTH 32768,
+            lv_act TYPE i.
       TRY.
           OPEN DATASET iv_file FOR INPUT IN BINARY MODE.
           IF sy-subrc <> 0.
             RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = |Cannot open file { iv_file }|.
           ENDIF.
-          READ DATASET iv_file INTO rv_xdata.
+          DO.
+            CLEAR lv_act.
+            READ DATASET iv_file INTO lv_buf ACTUAL LENGTH lv_act.
+            IF lv_act > 0.
+              rv_xdata = rv_xdata && lv_buf(lv_act).
+            ENDIF.
+            IF sy-subrc <> 0 OR lv_act = 0.
+              EXIT.                                  "end of file
+            ENDIF.
+          ENDDO.
           CLOSE DATASET iv_file.
         CATCH cx_sy_file_open cx_sy_file_authority cx_sy_file_io INTO DATA(lx_file).
           RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = lx_file->get_text( ).
       ENDTRY.
+    ENDIF.
+
+    IF xstrlen( rv_xdata ) = 0.
+      RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = |File { iv_file } is empty|.
     ENDIF.
   ENDMETHOD.
 
@@ -863,12 +882,24 @@ CLASS lcl_file_reader IMPLEMENTATION.
     DATA: lo_xl     TYPE REF TO cl_fdt_xl_spreadsheet,
           lt_values TYPE string_table.
 
+    "An .xlsx file is a zip archive: it starts with the bytes 'PK'. Anything else
+    "(e.g. a file changed by a text mode transfer, an old .xls, a CSV with the wrong
+    "extension) is reported with its size and first bytes.
+    DATA(lv_size) = xstrlen( iv_xdata ).
+    IF lv_size < 4 OR iv_xdata(2) <> '504B'.
+      DATA(lv_head) = COND xstring( WHEN lv_size >= 4 THEN iv_xdata(4) ELSE iv_xdata ).
+      RAISE EXCEPTION TYPE lcx_error
+        EXPORTING
+          iv_text = |File { iv_file } is not a valid XLSX file ({ lv_size } bytes, starts with { lv_head }) | &&
+                    |- for a file on the application server check that it was copied in binary mode|.
+    ENDIF.
+
     TRY.
         lo_xl = NEW #( document_name = iv_file xdocument = iv_xdata ).
       CATCH cx_fdt_excel_core INTO DATA(lx_xl).
         RAISE EXCEPTION TYPE lcx_error
           EXPORTING
-            iv_text = |File is not a valid XLSX file: { lx_xl->get_text( ) }|.
+            iv_text = |File is not a valid XLSX file ({ lv_size } bytes): { lx_xl->get_text( ) }|.
     ENDTRY.
 
     lo_xl->if_fdt_doc_spreadsheet~get_worksheet_names( IMPORTING worksheet_names = DATA(lt_ws) ).
