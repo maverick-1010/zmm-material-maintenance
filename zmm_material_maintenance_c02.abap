@@ -886,7 +886,8 @@ CLASS lcl_file_reader IMPLEMENTATION.
     "(e.g. a file changed by a text mode transfer, an old .xls, a CSV with the wrong
     "extension) is reported with its size and first bytes.
     DATA(lv_size) = xstrlen( iv_xdata ).
-    IF lv_size < 4 OR iv_xdata(2) <> '504B'.
+    DATA(lv_pk)   = CONV xstring( '504B' ).
+    IF lv_size < 4 OR iv_xdata(2) <> lv_pk.
       DATA(lv_head) = COND xstring( WHEN lv_size >= 4 THEN iv_xdata(4) ELSE iv_xdata ).
       RAISE EXCEPTION TYPE lcx_error
         EXPORTING
