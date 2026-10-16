@@ -895,12 +895,22 @@ CLASS lcl_file_reader IMPLEMENTATION.
                     |- for a file on the application server check that it was copied in binary mode|.
     ENDIF.
 
+    "The document name is only a label for the reader: a neutral name instead of the
+    "path, so that dots / backslashes / directories of a PC or server path can not
+    "disturb it (same call for local and application-server files).
     TRY.
-        lo_xl = NEW #( document_name = iv_file xdocument = iv_xdata ).
+        lo_xl = NEW #( document_name = `template.xlsx` xdocument = iv_xdata ).
       CATCH cx_fdt_excel_core INTO DATA(lx_xl).
+        "full cause: exception class, text and the chain of previous exceptions
+        DATA(lv_cause) = |{ cl_abap_classdescr=>describe_by_object_ref( lx_xl )->get_relative_name( ) }: { lx_xl->get_text( ) }|.
+        DATA(lx_prev) = lx_xl->previous.
+        WHILE lx_prev IS BOUND.
+          lv_cause = |{ lv_cause } / { cl_abap_classdescr=>describe_by_object_ref( lx_prev )->get_relative_name( ) }: { lx_prev->get_text( ) }|.
+          lx_prev = lx_prev->previous.
+        ENDWHILE.
         RAISE EXCEPTION TYPE lcx_error
           EXPORTING
-            iv_text = |File is not a valid XLSX file ({ lv_size } bytes): { lx_xl->get_text( ) }|.
+            iv_text = |File { iv_file } is not a valid XLSX file ({ lv_size } bytes): { lv_cause }|.
     ENDTRY.
 
     lo_xl->if_fdt_doc_spreadsheet~get_worksheet_names( IMPORTING worksheet_names = DATA(lt_ws) ).
