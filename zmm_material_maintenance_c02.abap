@@ -895,6 +895,27 @@ CLASS lcl_file_reader IMPLEMENTATION.
                     |- for a file on the application server check that it was copied in binary mode|.
     ENDIF.
 
+    "Zip structure: a file copied to the server in text (ASCII) mode - e.g. CG3Z with
+    "transfer format ASC - still starts with 'PK', but its line feed bytes are changed,
+    "so offsets and checksums inside the archive are broken. The Excel reader then only
+    "says 'A BRFplus exception occurred'; this check names the real cause.
+    DATA lx_part TYPE xstring.
+    DATA(lo_zip) = NEW cl_abap_zip( ).
+    lo_zip->load( EXPORTING zip = iv_xdata EXCEPTIONS OTHERS = 1 ).
+    DATA(lv_zip_ok) = xsdbool( sy-subrc = 0 ).
+    IF lv_zip_ok = abap_true.
+      lo_zip->get( EXPORTING name = 'xl/workbook.xml' IMPORTING content = lx_part EXCEPTIONS OTHERS = 1 ).
+      lv_zip_ok = xsdbool( sy-subrc = 0 AND lx_part IS NOT INITIAL ).
+    ENDIF.
+    IF lv_zip_ok = abap_false.
+      RAISE EXCEPTION TYPE lcx_error
+        EXPORTING
+          iv_text = |File { iv_file } is damaged or not an Excel workbook ({ lv_size } bytes, zip content | &&
+                    |not readable). A file copied to the application server in text mode (e.g. CG3Z | &&
+                    |with format ASC) is damaged this way - copy it again in binary mode (BIN) and | &&
+                    |check that the size is the same as on the PC|.
+    ENDIF.
+
     "The document name is only a label for the reader: a neutral name instead of the
     "path, so that dots / backslashes / directories of a PC or server path can not
     "disturb it (same call for local and application-server files).
