@@ -876,8 +876,10 @@ CLASS lcl_file_reader IMPLEMENTATION.
       RAISE EXCEPTION TYPE lcx_error EXPORTING iv_text = 'XLSX file contains no worksheet'.
     ENDIF.
 
-    "Template = first worksheet
-    DATA(lr_data) = lo_xl->if_fdt_doc_spreadsheet~get_itab_from_worksheet( lt_ws[ 1 ] ).
+    "Data sheet: more than one worksheet -> the second one (the first one holds the
+    "instructions, the others are ignored); only one worksheet -> that one.
+    DATA(lv_sheet_idx) = COND i( WHEN lines( lt_ws ) > 1 THEN 2 ELSE 1 ).
+    DATA(lr_data) = lo_xl->if_fdt_doc_spreadsheet~get_itab_from_worksheet( lt_ws[ lv_sheet_idx ] ).
     ASSIGN lr_data->* TO <lt_ws>.
     CHECK sy-subrc = 0.
 
