@@ -37,6 +37,7 @@ SAP ABAP report for mass **creation, update and extension of material masters** 
 | `zmm_material_maintenance_c01.abap` | Local class definitions |
 | `zmm_material_maintenance_c02.abap` | Local class implementations |
 | `documents/Mass_Material_Maintenance_Training_Guide.docx` | End-user training guide (Create / Update / Extend) |
+| `documents/ZMM_Material_Maintenance_Presentation.pptx` | Presentation of the development (functions and configuration tables) |
 | `documents/instruction_sheets/` | Instruction sheets for the Create, Update and Extend Excel templates (add as the first sheet of each template) |
 
 ## Usage
