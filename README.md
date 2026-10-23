@@ -39,6 +39,7 @@ SAP ABAP report for mass **creation, update and extension of material masters** 
 | `documents/Mass_Material_Maintenance_Training_Guide.docx` | End-user training guide (Create / Update / Extend) |
 | `documents/ZMM_Material_Maintenance_Presentation.pptx` | Presentation of the development (functions and configuration tables) |
 | `documents/ZMM_Material_Maintenance_Presentation_v2.pptx` | Presentation v2 - without the configuration-table slides |
+| `documents/TS_ZMM_Material_Maintenance.docx` | Technical specification (DMND0025421) |
 | `documents/instruction_sheets/` | Instruction sheets for the Create, Update and Extend Excel templates (add as the first sheet of each template) |
 
 ## Usage
