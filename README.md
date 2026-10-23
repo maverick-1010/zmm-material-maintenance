@@ -43,6 +43,7 @@ Transaction code: **ZMAT_MAINT**
 | `documents/ZMM_Material_Maintenance_Presentation_v2.pptx` | Presentation v2 - without the configuration-table slides |
 | `documents/TDS_DMND0025421_ZMM_Material_Maintenance.docx` | Technical Design Specification (DMND0025421) |
 | `documents/ZMM_MAINT_Configuration_Tables.xlsx` | Configuration tables: structures, Z data elements, use in the program, SM30 maintenance |
+| `documents/Code_Review_ZMM_MATERIAL_MAINTENANCE_DMND0025421.xlsx` | Code review checklist for DMND0025421 (findings, open points) |
 | `documents/instruction_sheets/` | Instruction sheets for the Create, Update and Extend Excel templates (add as the first sheet of each template) |
 
 ## Usage
