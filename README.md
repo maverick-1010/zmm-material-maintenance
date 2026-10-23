@@ -2,6 +2,8 @@
 
 SAP ABAP report for mass **creation, update and extension of material masters** from an Excel file, using `BAPI_MATERIAL_SAVEREPLICA`.
 
+Transaction code: **ZMAT_MAINT**
+
 ## Operations
 
 | Operation | ACTION value | Purpose |
@@ -12,7 +14,7 @@ SAP ABAP report for mass **creation, update and extension of material masters** 
 
 ## Main features
 
-- Variant selection by material type, industry sector, business profile and operation (`ZTMM_MATMAS_MAST`); mandatory/default fields come from the `ZTMM_*_DATA`, `ZTMM_DEFLT_DATA` and `ZTMM_COND_MAND` configuration tables.
+- Variant selection by material type, industry sector, business profile and operation (`ZTMM_MATMAS_MAST`); mandatory/default fields come from the `ZTMM_*_DATA`, `ZTMM_DEFLT_DATA` and `ZTMM_COND_MAND` configuration tables, maintained with SM30 (table maintenance generator with the same name as the table).
 - Reference material copy (Create / Extend) with `COPY_*` flags.
 - Product hierarchy, classification (`BAPI_OBJCL_*`), purchase order text (`PO_TEXT`) and sales text (`SALES_TEXT`).
 - **Test run** (simulation) and **actual run**. In an actual run every row is simulated first with a temporary number; a real number is drawn from the number range only after the simulation succeeded, so failed rows do not waste material numbers.
@@ -40,11 +42,12 @@ SAP ABAP report for mass **creation, update and extension of material masters** 
 | `documents/ZMM_Material_Maintenance_Presentation.pptx` | Presentation of the development (functions and configuration tables) |
 | `documents/ZMM_Material_Maintenance_Presentation_v2.pptx` | Presentation v2 - without the configuration-table slides |
 | `documents/TDS_DMND0025421_ZMM_Material_Maintenance.docx` | Technical Design Specification (DMND0025421) |
+| `documents/ZMM_MAINT_Configuration_Tables.xlsx` | Configuration tables: structures, Z data elements, use in the program, SM30 maintenance |
 | `documents/instruction_sheets/` | Instruction sheets for the Create, Update and Extend Excel templates (add as the first sheet of each template) |
 
 ## Usage
 
-1. Run the report, select the operation, material type, industry sector and business profile.
+1. Start transaction `ZMAT_MAINT`, select the operation, material type, industry sector and business profile.
 2. Download the template, fill the data sheet and save as `.xlsx`.
 3. Run with **Test run** ticked and correct all errors in the ALV list.
 4. Run again without Test run to post.
