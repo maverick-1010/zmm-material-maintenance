@@ -3245,9 +3245,10 @@ CLASS lcl_app IMPLEMENTATION.
   METHOD apply_current_date.
     "Valid-from dates of the material status (MSTDV client level, VMSTD sales
     "view) - Create only; only if the field belongs to the variant.
-    "  1. value from the template  2. value from the reference material
-    "  3. value from ZTMM_DEFLT_DATA (APPLY_DEFAULTS, runs before)
-    "  4. nothing found -> current date
+    "  1. value from the template  2. value from ZTMM_DEFLT_DATA
+    "     (APPLY_DEFAULTS, runs before)  3. otherwise the current date
+    "The date of a reference material is never used: a value copied from the
+    "reference is replaced by the current date.
     "A value from the template / default table must be a valid date in the
     "format YYYYMMDD, otherwise an error is logged.
     CONSTANTS lc_date_fields TYPE string VALUE ` VMSTD MSTDV `.
@@ -3257,7 +3258,12 @@ CLASS lcl_app IMPLEMENTATION.
     LOOP AT lt_fields INTO DATA(lv_name).
       DATA(lv_field) = CONV fieldname( lv_name ).
       CHECK line_exists( mo_config->mt_fcat[ KEY k_field COMPONENTS temp_field_name = lv_field ] ).
-      CHECK NOT line_exists( mt_copied[ row = is_row-row field = lv_field ] ).
+
+      "date copied from the reference material: not used, the current date is set
+      DATA(lv_from_ref) = xsdbool( line_exists( mt_copied[ row = is_row-row field = lv_field ] ) ).
+      IF lv_from_ref = abap_true.
+        DELETE TABLE mt_copied WITH TABLE KEY row = is_row-row field = lv_field.
+      ENDIF.
 
       ASSIGN mt_cell[ row = is_row-row field = lv_field ] TO FIELD-SYMBOL(<ls_cell>).
       IF sy-subrc = 0.
@@ -3274,7 +3280,9 @@ CLASS lcl_app IMPLEMENTATION.
       DATA(lv_date) = CONV string( sy-datum ).                "YYYYMMDD
       INSERT VALUE #( row = is_row-row field = lv_field value = lv_date ) INTO TABLE mt_cell.
       mo_log->add( iv_type = 'S' is_row = is_row iv_field = lv_field
-                   iv_text = |Current date { lv_date } set for blank field { lv_field }| ).
+                   iv_text = COND string( WHEN lv_from_ref = abap_true
+                                     THEN |Current date { lv_date } set for { lv_field } - date of the reference material not used|
+                                     ELSE |Current date { lv_date } set for blank field { lv_field }| ) ).
 
       LOOP AT mo_config->mt_fcat INTO DATA(ls_fcat) USING KEY k_field WHERE temp_field_name = lv_field.
         validate_row( EXPORTING is_row = is_row is_fcat = ls_fcat CHANGING cs_bapi = cs_bapi ).
